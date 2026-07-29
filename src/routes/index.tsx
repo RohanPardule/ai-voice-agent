@@ -1,7 +1,7 @@
 import { createFileRoute, Link } from "@tanstack/react-router";
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { useServerFn } from "@tanstack/react-start";
-import { askAgent, getLeadContact, submitFeedback } from "@/lib/voice-agent.functions";
+import { askAgent, getLeadContact, recordCallSession, submitFeedback } from "@/lib/voice-agent.functions";
 import {
   isSpeechSynthesisSupported,
   isSpeechPlaying,
@@ -9,6 +9,7 @@ import {
   stopSpeech,
   unlockSpeechOnUserGesture,
 } from "@/lib/speech";
+import { isOffTopic, OFF_TOPIC_REFUSAL } from "@/lib/intent";
 import {
   Phone,
   PhoneOff,
@@ -283,6 +284,39 @@ interface SpeechRecognitionLike extends EventTarget {
 
 const POST_SPEAK_DELAY_MS = 600;
 
+const CAREERS_INFO =
+  "Thank you for your interest in joining Innowrap Technologies. For job opportunities, please email your resume and the role you are applying for to helios at innowrap dot com. Our team will review it and get back to you.";
+
+const CAREERS_FOLLOWUP = "Is there anything else I can help you with regarding our services?";
+
+const CAREERS_GOODBYE = "Thank you for calling Innowrap Technologies. Have a great day!";
+
+const CAREERS_REPROMPT =
+  "Would you like to hear about our services, or are you all set for today?";
+
+function detectCareersIntent(text: string): boolean {
+  const t = text.toLowerCase();
+  return /\b(job|jobs|career|careers|hiring|hire|vacancy|vacancies|internship|intern|apply|application|resume|cv|work here|join your team|looking for work|employment|recruit)\b/.test(
+    t,
+  );
+}
+
+function isNegativeResponse(text: string): boolean {
+  const t = text.toLowerCase().trim();
+  return (
+    /^(no|nope|nah|nothing|that's all|that is all|all set|i'm good|im good|thank you|thanks|bye|goodbye|no thanks|not really|that's it)\b/.test(
+      t,
+    ) || /\b(no thanks|nothing else|that's all|all good|i'm done|im done)\b/.test(t)
+  );
+}
+
+function isPositiveServicesInterest(text: string): boolean {
+  const t = text.toLowerCase();
+  return /\b(yes|yeah|yep|sure|please|services|tell me|what do you offer|business|project|enquir|interested in your)\b/.test(
+    t,
+  );
+}
+
 /** Collapse stuttered STT like "hihihi" → "hi" or "hello hello" → "hello". */
 function normalizeUserSpeech(text: string): string {
   let t = text.trim().replace(/\s+/g, " ");
@@ -303,6 +337,7 @@ function normalizeUserSpeech(text: string): string {
 }
 
 type CallPhase = "language" | "services" | "chat";
+type CareersPhase = null | "awaiting_followup" | "closed";
 
 const greetedSessions = new Set<string>();
 const greetingPromises = new Map<string, Promise<void>>();
@@ -404,6 +439,7 @@ function serviceQuestion(code: string): string {
 
 function CallScreen({ sessionId, onHangUp }: { sessionId: string; onHangUp: () => void }) {
   const ask = useServerFn(askAgent);
+  const saveSession = useServerFn(recordCallSession);
   const [status, setStatus] = useState<Status>("idle");
   const [hint, setHint] = useState<string>("Connecting…");
   const [agentCaption, setAgentCaption] = useState<string>("");
@@ -416,11 +452,29 @@ function CallScreen({ sessionId, onHangUp }: { sessionId: string; onHangUp: () =
   const langRef = useRef<string>("en-US");
   const activeRef = useRef<boolean>(true);
   const phaseRef = useRef<CallPhase>("language");
+  const careersPhaseRef = useRef<CareersPhase>(null);
   const bufferRef = useRef<string>("");
   const listeningRef = useRef<boolean>(false);
   const shouldRestartRef = useRef<boolean>(false);
   const speakingRef = useRef<boolean>(false);
   const intentionalStopRef = useRef<boolean>(false);
+
+  const persistSession = useCallback(
+    async (enquiryType: string) => {
+      try {
+        await saveSession({
+          data: {
+            sessionId,
+            transcript: historyRef.current,
+            enquiry_type: enquiryType,
+          },
+        });
+      } catch (e) {
+        console.error("recordCallSession failed", e);
+      }
+    },
+    [saveSession, sessionId],
+  );
 
   const wait = (ms: number) => new Promise((r) => window.setTimeout(r, ms));
 
@@ -481,11 +535,28 @@ function CallScreen({ sessionId, onHangUp }: { sessionId: string; onHangUp: () =
     }
   }, []);
 
+  const refuseOffTopic = useCallback(
+    async (trimmed: string, lang: string, userAlreadyLogged = false) => {
+      if (!userAlreadyLogged) {
+        historyRef.current = [...historyRef.current, { role: "user", content: trimmed }];
+      }
+      historyRef.current = [
+        ...historyRef.current,
+        { role: "assistant", content: OFF_TOPIC_REFUSAL },
+      ];
+      setStatus("speaking");
+      setHint("Speaking…");
+      await speak(OFF_TOPIC_REFUSAL, lang);
+      if (activeRef.current) startRecognition();
+    },
+    [speak, startRecognition],
+  );
+
   const processUtterance = useCallback(
     async (text: string) => {
       const trimmed = normalizeUserSpeech(text);
       if (!trimmed) {
-        if (activeRef.current) startRecognition();
+        if (activeRef.current && careersPhaseRef.current !== "closed") startRecognition();
         return;
       }
       setStatus("thinking");
@@ -495,7 +566,81 @@ function CallScreen({ sessionId, onHangUp }: { sessionId: string; onHangUp: () =
       try {
         stopRecognition();
 
+        const lang = langRef.current;
+
+        if (careersPhaseRef.current === "awaiting_followup") {
+          if (isOffTopic(trimmed)) {
+            historyRef.current = [...historyRef.current, { role: "user", content: trimmed }];
+            await refuseOffTopic(trimmed, lang, true);
+            return;
+          }
+
+          historyRef.current = [...historyRef.current, { role: "user", content: trimmed }];
+
+          if (isNegativeResponse(trimmed)) {
+            historyRef.current = [
+              ...historyRef.current,
+              { role: "assistant", content: CAREERS_GOODBYE },
+            ];
+            await persistSession("careers");
+            await speak(CAREERS_GOODBYE, lang);
+            careersPhaseRef.current = "closed";
+            setHint("Tap hang up when you're ready.");
+            return;
+          }
+
+          if (isPositiveServicesInterest(trimmed)) {
+            careersPhaseRef.current = null;
+            phaseRef.current = "chat";
+            const langLabel = languageName(lang);
+            const directive = `Respond in ${langLabel}. The caller asked about careers earlier but now wants to know about Innowrap Technologies' services. Give a brief helpful overview and ask what they are exploring. Keep it concise for voice. Do not mention careers unless they ask.`;
+            const userMsg = `${directive}\n\nUser said: ${trimmed}`;
+            const { reply } = await ask({
+              data: { history: historyRef.current, message: userMsg, sessionId },
+            });
+            historyRef.current = [...historyRef.current, { role: "assistant", content: reply }];
+            await speak(reply, lang);
+            if (activeRef.current) startRecognition();
+            return;
+          }
+
+          await speak(CAREERS_REPROMPT, lang);
+          historyRef.current = [
+            ...historyRef.current,
+            { role: "assistant", content: CAREERS_REPROMPT },
+          ];
+          if (activeRef.current) startRecognition();
+          return;
+        }
+
+        if (careersPhaseRef.current === "closed") {
+          return;
+        }
+
+        if (detectCareersIntent(trimmed)) {
+          careersPhaseRef.current = "awaiting_followup";
+          phaseRef.current = "chat";
+          langRef.current = detectLangCode(trimmed) ?? langRef.current;
+
+          historyRef.current = [
+            ...historyRef.current,
+            { role: "user", content: trimmed },
+            { role: "assistant", content: `${CAREERS_INFO} ${CAREERS_FOLLOWUP}` },
+          ];
+
+          await speak(CAREERS_INFO, langRef.current);
+          if (!activeRef.current) return;
+          await speak(CAREERS_FOLLOWUP, langRef.current);
+          await persistSession("careers");
+          if (activeRef.current) startRecognition();
+          return;
+        }
+
         if (phaseRef.current === "language") {
+          if (isOffTopic(trimmed)) {
+            await refuseOffTopic(trimmed, "en-US");
+            return;
+          }
           const code = detectLangCode(trimmed);
           if (!code) {
             setStatus("speaking");
@@ -515,6 +660,10 @@ function CallScreen({ sessionId, onHangUp }: { sessionId: string; onHangUp: () =
         }
 
         if (phaseRef.current === "services") {
+          if (isOffTopic(trimmed)) {
+            await refuseOffTopic(trimmed, langRef.current);
+            return;
+          }
           phaseRef.current = "chat";
           const lang = langRef.current;
           const langLabel = languageName(lang);
@@ -532,6 +681,11 @@ function CallScreen({ sessionId, onHangUp }: { sessionId: string; onHangUp: () =
           setHint("Speaking…");
           await speak(reply, lang);
           if (activeRef.current) startRecognition();
+          return;
+        }
+
+        if (isOffTopic(trimmed)) {
+          await refuseOffTopic(trimmed, langRef.current);
           return;
         }
 
@@ -570,7 +724,7 @@ function CallScreen({ sessionId, onHangUp }: { sessionId: string; onHangUp: () =
         }
       }
     },
-    [ask, sessionId, speak, startRecognition, stopRecognition],
+    [ask, persistSession, refuseOffTopic, sessionId, speak, startRecognition, stopRecognition],
   );
 
   const setupRecognition = useCallback(() => {
@@ -647,6 +801,7 @@ function CallScreen({ sessionId, onHangUp }: { sessionId: string; onHangUp: () =
     recognitionRef.current = setupRecognition();
     activeRef.current = true;
     phaseRef.current = "language";
+    careersPhaseRef.current = null;
     langRef.current = "en-US";
 
     setStatus("speaking");

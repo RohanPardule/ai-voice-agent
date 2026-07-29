@@ -32,6 +32,7 @@ type Lead = {
   budget: string | null;
   timeline: string | null;
   requirements: string | null;
+  enquiry_type: string | null;
   transcript: Array<{ role: "user" | "assistant"; content: string }>;
   created_at: string;
   updated_at: string;
@@ -196,6 +197,7 @@ function Dashboard() {
                       <thead className="border-b border-border bg-muted/50 text-left text-xs uppercase tracking-wider text-muted-foreground">
                         <tr>
                           <th className="px-4 py-3">When</th>
+                          <th className="px-4 py-3">Type</th>
                           <th className="px-4 py-3">Name</th>
                           <th className="px-4 py-3">Company</th>
                           <th className="px-4 py-3">Email</th>
@@ -207,14 +209,14 @@ function Dashboard() {
                       <tbody>
                         {loading && (
                           <tr>
-                            <td colSpan={7} className="px-4 py-8 text-center text-muted-foreground">
+                            <td colSpan={8} className="px-4 py-8 text-center text-muted-foreground">
                               Loading…
                             </td>
                           </tr>
                         )}
                         {!loading && currentList.length === 0 && (
                           <tr>
-                            <td colSpan={7} className="px-4 py-8 text-center text-muted-foreground">
+                            <td colSpan={8} className="px-4 py-8 text-center text-muted-foreground">
                               {tab === "anon" ? "No anonymous sessions." : "No leads yet."}
                             </td>
                           </tr>
@@ -228,6 +230,7 @@ function Dashboard() {
                             <td className="whitespace-nowrap px-4 py-3 text-muted-foreground">
                               {new Date(lead.created_at).toLocaleString()}
                             </td>
+                            <td className="px-4 py-3 capitalize">{lead.enquiry_type ?? "—"}</td>
                             <td className="px-4 py-3 font-medium">{lead.name ?? "—"}</td>
                             <td className="px-4 py-3">{lead.company ?? "—"}</td>
                             <td className="px-4 py-3">{lead.email ?? "—"}</td>
@@ -313,6 +316,7 @@ function Dashboard() {
             </div>
 
             <div className="grid grid-cols-2 gap-3 text-sm">
+              <Field label="Enquiry type" value={selected.enquiry_type} />
               <Field label="Company" value={selected.company} />
               <Field label="Email" value={selected.email} />
               <Field label="Phone" value={selected.phone} />

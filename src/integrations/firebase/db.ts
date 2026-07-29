@@ -23,6 +23,7 @@ export type LeadRecord = {
   budget: string | null;
   timeline: string | null;
   requirements: string | null;
+  enquiry_type: string | null;
   transcript: Msg[];
   created_at: string;
   updated_at: string;
