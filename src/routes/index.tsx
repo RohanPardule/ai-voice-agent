@@ -94,7 +94,9 @@ function Home() {
   }
 
   async function hangUp() {
+    stopSpeech();
     if (sessionId) {
+      cancelCallAudio(sessionId);
       try {
         const c = await fetchContact({ data: { sessionId } });
         setPrefill(c);
@@ -305,6 +307,15 @@ type CallPhase = "language" | "services" | "chat";
 const greetedSessions = new Set<string>();
 const greetingPromises = new Map<string, Promise<void>>();
 const captionCallbacks = new Map<string, (text: string) => void>();
+const cancelledGreetings = new Set<string>();
+
+export function cancelCallAudio(sessionId: string): void {
+  cancelledGreetings.add(sessionId);
+  greetingPromises.delete(sessionId);
+  greetedSessions.delete(sessionId);
+  captionCallbacks.delete(sessionId);
+  stopSpeech();
+}
 
 function runCallGreeting(
   sessionId: string,
@@ -319,11 +330,14 @@ function runCallGreeting(
 
   const promise = (async () => {
     const line1 = "Hi, welcome to Innowrap Technologies.";
+    if (cancelledGreetings.has(sessionId)) return;
     notify(line1);
     await speakText(line1, "en-US");
+    if (cancelledGreetings.has(sessionId)) return;
     const line2 = "Which language would you like to continue in?";
     notify(line2);
     await speakText(line2, "en-US");
+    if (cancelledGreetings.has(sessionId)) return;
     greetedSessions.add(sessionId);
   })();
 
@@ -669,10 +683,7 @@ function CallScreen({ sessionId, onHangUp }: { sessionId: string; onHangUp: () =
     intentionalStopRef.current = true;
     shouldRestartRef.current = false;
     stopRecognition();
-    stopSpeech();
-    greetingPromises.delete(sessionId);
-    greetedSessions.delete(sessionId);
-    captionCallbacks.delete(sessionId);
+    cancelCallAudio(sessionId);
     onHangUp();
   }
 
@@ -777,18 +788,40 @@ function FeedbackScreen({
   const [error, setError] = useState<string | null>(null);
   const [done, setDone] = useState(false);
 
+  const trimmedName = name.trim();
+  const trimmedEmail = email.trim();
+  const trimmedMessage = message.trim();
+  const emailValid = /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(trimmedEmail);
+  const canSubmit = Boolean(trimmedName && trimmedEmail && emailValid && trimmedMessage);
+
   async function onSubmit(e: React.FormEvent) {
     e.preventDefault();
+    if (!trimmedName) {
+      setError("Please enter your name.");
+      return;
+    }
+    if (!trimmedEmail) {
+      setError("Please enter your email.");
+      return;
+    }
+    if (!emailValid) {
+      setError("Please enter a valid email address.");
+      return;
+    }
+    if (!trimmedMessage) {
+      setError("Please enter your feedback.");
+      return;
+    }
     setBusy(true);
     setError(null);
     try {
       await submit({
         data: {
           sessionId,
-          name: name.trim(),
-          email: email.trim(),
+          name: trimmedName,
+          email: trimmedEmail,
           rating,
-          message: message.trim(),
+          message: trimmedMessage,
         },
       });
       setDone(true);
@@ -835,22 +868,34 @@ function FeedbackScreen({
               ))}
             </div>
             <input
-              placeholder="Your name"
+              required
+              placeholder="Your name *"
               value={name}
-              onChange={(e) => setName(e.target.value)}
+              onChange={(e) => {
+                setName(e.target.value);
+                setError(null);
+              }}
               className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-ring"
             />
             <input
+              required
               type="email"
-              placeholder="Email"
+              placeholder="Email *"
               value={email}
-              onChange={(e) => setEmail(e.target.value)}
+              onChange={(e) => {
+                setEmail(e.target.value);
+                setError(null);
+              }}
               className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-ring"
             />
             <textarea
-              placeholder="Tell us what worked or what could be better…"
+              required
+              placeholder="Your feedback *"
               value={message}
-              onChange={(e) => setMessage(e.target.value)}
+              onChange={(e) => {
+                setMessage(e.target.value);
+                setError(null);
+              }}
               rows={4}
               className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-ring"
             />
@@ -865,8 +910,8 @@ function FeedbackScreen({
               </button>
               <button
                 type="submit"
-                disabled={busy}
-                className="flex-1 rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground hover:bg-primary/90 disabled:opacity-60"
+                disabled={busy || !canSubmit}
+                className="flex-1 rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground hover:bg-primary/90 disabled:cursor-not-allowed disabled:opacity-60"
               >
                 {busy ? "Submitting…" : "Submit"}
               </button>

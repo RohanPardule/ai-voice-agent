@@ -2,6 +2,7 @@ let resumeTimer: ReturnType<typeof setInterval> | null = null;
 let voicesCache: SpeechSynthesisVoice[] | null = null;
 let speakChain: Promise<void> = Promise.resolve();
 let speakingActive = false;
+let speechGeneration = 0;
 
 function getSynth(): SpeechSynthesis | null {
   if (typeof window === "undefined" || !("speechSynthesis" in window)) return null;
@@ -106,20 +107,24 @@ export function unlockSpeechOnUserGesture(): void {
 
 export function stopSpeech(): void {
   const synth = getSynth();
-  if (!synth) return;
+  speechGeneration += 1;
   speakingActive = false;
   clearResumeTimer();
   speakChain = Promise.resolve();
-  synth.cancel();
+  if (synth) synth.cancel();
 }
 
-function speakOne(text: string, lang: string): Promise<void> {
+function speakOne(text: string, lang: string, generation: number): Promise<void> {
   const synth = getSynth();
-  if (!synth || !text.trim()) return Promise.resolve();
+  if (!synth || !text.trim() || generation !== speechGeneration) return Promise.resolve();
 
   return loadVoices(synth).then(
     (voices) =>
       new Promise<void>((resolve) => {
+        if (generation !== speechGeneration) {
+          resolve();
+          return;
+        }
         let done = false;
         let safetyId = 0;
         let interruptRetries = 0;
@@ -133,6 +138,10 @@ function speakOne(text: string, lang: string): Promise<void> {
         };
 
         const run = () => {
+          if (generation !== speechGeneration) {
+            finish();
+            return;
+          }
           const utterance = new SpeechSynthesisUtterance(text);
           utterance.lang = lang;
           utterance.rate = 0.92;
@@ -144,15 +153,17 @@ function speakOne(text: string, lang: string): Promise<void> {
           utterance.onstart = () => startResumeTimer(synth);
           utterance.onend = finish;
           utterance.onerror = (ev) => {
+            if (generation !== speechGeneration || ev.error === "canceled") {
+              finish();
+              return;
+            }
             if (ev.error === "interrupted" && interruptRetries < 5) {
               interruptRetries += 1;
               synth.resume();
               window.setTimeout(run, 150);
               return;
             }
-            if (ev.error !== "canceled") {
-              console.warn("TTS error:", ev.error);
-            }
+            console.warn("TTS error:", ev.error);
             finish();
           };
 
@@ -168,15 +179,18 @@ function speakOne(text: string, lang: string): Promise<void> {
 
 /** Queue speeches so they never cancel each other. Long text is split into sentences. */
 export async function speakText(text: string, lang = "en-US"): Promise<void> {
+  const generation = speechGeneration;
   const chunks = splitForSpeech(text);
   speakingActive = true;
   try {
     for (const chunk of chunks) {
-      const next = speakChain.then(() => speakOne(chunk, lang));
+      if (generation !== speechGeneration) return;
+      const next = speakChain.then(() => speakOne(chunk, lang, generation));
       speakChain = next.catch(() => {});
       await next;
+      if (generation !== speechGeneration) return;
     }
   } finally {
-    speakingActive = false;
+    if (generation === speechGeneration) speakingActive = false;
   }
 }

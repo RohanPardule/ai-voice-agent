@@ -159,12 +159,19 @@ export const submitFeedback = createServerFn({ method: "POST" })
       rating?: number;
       message?: string;
     };
+    const name = d?.name?.trim() || "";
+    const email = d?.email?.trim() || "";
+    const message = d?.message?.trim() || "";
+    if (!name) throw new Error("Name is required");
+    if (!email) throw new Error("Email is required");
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) throw new Error("Valid email is required");
+    if (!message) throw new Error("Feedback is required");
     return {
       sessionId: d?.sessionId ?? null,
-      name: d?.name?.trim() || null,
-      email: d?.email?.trim() || null,
+      name,
+      email,
       rating: typeof d?.rating === "number" ? d.rating : null,
-      message: d?.message?.trim() || null,
+      message,
     };
   })
   .handler(async ({ data }) => {
