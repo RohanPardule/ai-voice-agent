@@ -294,17 +294,44 @@ const CAREERS_GOODBYE = "Thank you for calling Innowrap Technologies. Have a gre
 const CAREERS_REPROMPT =
   "Would you like to hear about our services, or are you all set for today?";
 
-function detectCareersIntent(text: string): boolean {
+function detectCareersIntent(text: string, phase: CallPhase): boolean {
+  const t = text.toLowerCase().trim();
+
+  const explicitJobSeeking =
+    /\b(looking for a job|want a job|need a job|job opening|job opportunity|job vacancy|career opportunity|join your team|work at innowrap|work for innowrap)\b/.test(
+      t,
+    ) ||
+    /\b(i'?m |i am )?(applying|looking) for (a )?(job|position|role|internship)\b/.test(t) ||
+    /\b(send|email|submit) (my )?(resume|cv)\b/.test(t) ||
+    /\b(interested in (a )?)(job|career|internship)\b/.test(t);
+
+  if (explicitJobSeeking) return true;
+
+  // In active sales chat, only explicit job-seeking phrases — not "hire you to build" or "application"
+  if (phase === "chat") return false;
+
+  return (
+    /\b(careers|hiring|recruitment|recruiting|job fair)\b/.test(t) &&
+    /\b(job|position|role|resume|cv)\b/.test(t)
+  );
+}
+
+function detectSalesIntent(text: string): boolean {
   const t = text.toLowerCase();
-  return /\b(job|jobs|career|careers|hiring|hire|vacancy|vacancies|internship|intern|apply|application|resume|cv|work here|join your team|looking for work|employment|recruit)\b/.test(
+  return /\b(app|software|project|develop|website|mobile|flutter|react|ai|agent|business|company|budget|timeline|quote|service|build|retail|enterprise|solution|platform|need|want|looking for)\b/.test(
     t,
   );
 }
 
 function isNegativeResponse(text: string): boolean {
   const t = text.toLowerCase().trim();
+  // "No, I want a mobile app" is NOT a goodbye — still discussing business
+  if (detectSalesIntent(t) || t.length > 40) return false;
+  if (/\b(but|want|need|actually|however|app|project|service|business|tell me)\b/.test(t)) {
+    return false;
+  }
   return (
-    /^(no|nope|nah|nothing|that's all|that is all|all set|i'm good|im good|thank you|thanks|bye|goodbye|no thanks|not really|that's it)\b/.test(
+    /^(no|nope|nah|nothing|that's all|that is all|all set|i'm good|im good|thank you|thanks|bye|goodbye|no thanks|not really|that's it)[.!]?$/.test(
       t,
     ) || /\b(no thanks|nothing else|that's all|all good|i'm done|im done)\b/.test(t)
   );
@@ -329,7 +356,7 @@ function isAmbiguousFragment(text: string): boolean {
 function buildTurnContext(langLabel: string, extra?: string): string {
   const parts = [
     `Respond in ${langLabel}.`,
-    "Keep to 2 short sentences max, one question only.",
+    "STRICT: Max 12 words. Direct and professional. No great/nice/wow/perfect. One question only.",
     extra,
   ].filter(Boolean);
   return parts.join(" ");
@@ -435,27 +462,35 @@ const LANGUAGE_REPROMPT =
 
 function serviceQuestion(code: string): string {
   const questions: Record<string, string> = {
-    "en-US": "Great! Which services are you looking for?",
-    "hi-IN": "बहुत अच्छा! आप कौन सी सेवाओं की तलाश में हैं?",
-    "mr-IN": "छान! तुम्हाला कोणत्या सेवा हव्या आहेत?",
-    "gu-IN": "સરસ! તમે કઈ સેવાઓ શોધી રહ્યા છો?",
-    "ta-IN": "நன்று! நீங்கள் எந்த சேவைகளைத் தேடுகிறீர்கள்?",
-    "te-IN": "బాగుంది! మీరు ఏ సేవలు కోసం చూస్తున్నారు?",
-    "bn-IN": "দারুণ! আপনি কোন সেবা খুঁজছেন?",
-    "kn-IN": "ಚೆನ್ನಾಗಿದೆ! ನೀವು ಯಾವ ಸೇವೆಗಳನ್ನು ಹುಡುಕುತ್ತಿದ್ದೀರಿ?",
-    "pa-IN": "ਬਹੁਤ ਵਧੀਆ! ਤੁਸੀਂ ਕਿਹੜੀਆਂ ਸੇਵਾਵਾਂ ਲੱਭ ਰਹੇ ਹੋ?",
-    "es-ES": "¡Perfecto! ¿Qué servicios está buscando?",
-    "fr-FR": "Parfait ! Quels services recherchez-vous ?",
-    "de-DE": "Super! Welche Dienstleistungen suchen Sie?",
-    "ar-SA": "رائع! ما الخدمات التي تبحث عنها؟",
-    "pt-BR": "Ótimo! Quais serviços você está procurando?",
-    "zh-CN": "好的！您在寻找哪些服务？",
-    "ja-JP": "かしこまりました。どのサービスをお探しですか？",
+    "en-US": "Which services are you looking for?",
+    "hi-IN": "आप कौन सी सेवाओं की तलाश में हैं?",
+    "mr-IN": "तुम्हाला कोणत्या सेवा हव्या आहेत?",
+    "gu-IN": "તમે કઈ સેવાઓ શોધી રહ્યા છો?",
+    "ta-IN": "நீங்கள் எந்த சேவைகளைத் தேடுகிறீர்கள்?",
+    "te-IN": "మీరు ఏ సేవలు కోసం చూస్తున్నారు?",
+    "bn-IN": "আপনি কোন সেবা খুঁজছেন?",
+    "kn-IN": "ನೀವು ಯಾವ ಸೇವೆಗಳನ್ನು ಹುಡುಕುತ್ತಿದ್ದೀರಿ?",
+    "pa-IN": "ਤੁਸੀਂ ਕਿਹੜੀਆਂ ਸੇਵਾਵਾਂ ਲੱਭ ਰਹੇ ਹੋ?",
+    "es-ES": "¿Qué servicios está buscando?",
+    "fr-FR": "Quels services recherchez-vous ?",
+    "de-DE": "Welche Dienstleistungen suchen Sie?",
+    "ar-SA": "ما الخدمات التي تبحث عنها؟",
+    "pt-BR": "Quais serviços você está procurando?",
+    "zh-CN": "您在寻找哪些服务？",
+    "ja-JP": "どのサービスをお探しですか？",
   };
   return questions[code] ?? questions["en-US"];
 }
 
-function CallScreen({ sessionId, onHangUp }: { sessionId: string; onHangUp: () => void }) {
+function isHangUpIntent(text: string): boolean {
+  const t = text.toLowerCase().trim();
+  if (detectSalesIntent(t)) return false;
+  return /\b(bye|goodbye|hang up|gotta go|that's all|thank you|thanks|no thanks|nothing else|all set|i'm done)\b/.test(
+    t,
+  );
+}
+
+function CallScreen({ sessionId, onHangUp }: { sessionId: string; onHangUp: () => void | Promise<void> }) {
   const ask = useServerFn(askAgent);
   const saveSession = useServerFn(recordCallSession);
   const [status, setStatus] = useState<Status>("idle");
@@ -570,6 +605,17 @@ function CallScreen({ sessionId, onHangUp }: { sessionId: string; onHangUp: () =
     [speak, startRecognition],
   );
 
+  const finishCareersAndHangUp = useCallback(async () => {
+    activeRef.current = false;
+    speakingRef.current = false;
+    intentionalStopRef.current = true;
+    shouldRestartRef.current = false;
+    stopRecognition();
+    cancelCallAudio(sessionId);
+    careersPhaseRef.current = "closed";
+    await onHangUp();
+  }, [onHangUp, sessionId, stopRecognition]);
+
   const processUtterance = useCallback(
     async (text: string) => {
       const trimmed = normalizeUserSpeech(text);
@@ -595,21 +641,21 @@ function CallScreen({ sessionId, onHangUp }: { sessionId: string; onHangUp: () =
 
           historyRef.current = [...historyRef.current, { role: "user", content: trimmed }];
 
-          if (isNegativeResponse(trimmed)) {
+          if (isNegativeResponse(trimmed) || isHangUpIntent(trimmed)) {
             historyRef.current = [
               ...historyRef.current,
               { role: "assistant", content: CAREERS_GOODBYE },
             ];
             await persistSession("careers");
             await speak(CAREERS_GOODBYE, lang);
-            careersPhaseRef.current = "closed";
-            setHint("Tap hang up when you're ready.");
+            await finishCareersAndHangUp();
             return;
           }
 
-          if (isPositiveServicesInterest(trimmed)) {
+          if (isPositiveServicesInterest(trimmed) || detectSalesIntent(trimmed)) {
             careersPhaseRef.current = null;
             phaseRef.current = "chat";
+            await persistSession("sales");
             const langLabel = languageName(lang);
             const { reply } = await ask({
               data: {
@@ -618,8 +664,9 @@ function CallScreen({ sessionId, onHangUp }: { sessionId: string; onHangUp: () =
                 sessionId,
                 turnContext: buildTurnContext(
                   langLabel,
-                  "Caller asked about careers earlier but now wants services. Brief overview only; do not mention careers unless asked.",
+                  "Brief services overview. One question.",
                 ),
+                enquiryType: "sales",
               },
             });
             historyRef.current = [...historyRef.current, { role: "assistant", content: reply }];
@@ -641,7 +688,7 @@ function CallScreen({ sessionId, onHangUp }: { sessionId: string; onHangUp: () =
           return;
         }
 
-        if (detectCareersIntent(trimmed)) {
+        if (detectCareersIntent(trimmed, phaseRef.current)) {
           careersPhaseRef.current = "awaiting_followup";
           phaseRef.current = "chat";
           langRef.current = detectLangCode(trimmed) ?? langRef.current;
@@ -698,8 +745,9 @@ function CallScreen({ sessionId, onHangUp }: { sessionId: string; onHangUp: () =
               sessionId,
               turnContext: buildTurnContext(
                 langLabel,
-                "First service enquiry turn. Acknowledge interest briefly, then ask one qualifying question.",
+                "Sales call. Acknowledge briefly, ask one question.",
               ),
+              enquiryType: "sales",
             },
           });
           historyRef.current = [
@@ -730,6 +778,7 @@ function CallScreen({ sessionId, onHangUp }: { sessionId: string; onHangUp: () =
             callerText: trimmed,
             sessionId,
             turnContext: buildTurnContext(langLabel, ambiguousHint),
+            enquiryType: "sales",
           },
         });
         historyRef.current = [
@@ -760,7 +809,7 @@ function CallScreen({ sessionId, onHangUp }: { sessionId: string; onHangUp: () =
         }
       }
     },
-    [ask, persistSession, refuseOffTopic, sessionId, speak, startRecognition, stopRecognition],
+    [ask, finishCareersAndHangUp, persistSession, refuseOffTopic, sessionId, speak, startRecognition, stopRecognition],
   );
 
   const setupRecognition = useCallback(() => {

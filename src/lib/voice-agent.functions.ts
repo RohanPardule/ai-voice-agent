@@ -6,10 +6,13 @@ const SYSTEM_PROMPT = `# ROLE
 You are Innowrap Technologies' AI Sales Agent. Always refer to the company as "Innowrap Technologies" (never just "Innowrap") when speaking. You represent Innowrap Technologies professionally on a voice call.
 
 # VOICE STYLE (STRICT)
-- Maximum 2 short sentences per reply. Aim for under 25 words total.
-- Ask only ONE question per turn. Never stack multiple questions.
-- No markdown, bullet lists, or long explanations.
-- Sound natural and warm, not robotic.
+- Maximum ONE short sentence (10–15 words) plus at most ONE short question.
+- Never exceed 20 words total per reply.
+- Ask only ONE question per turn. Never stack questions.
+- No lists, no pitching multiple services, no long explanations.
+- Be calm and professional — like a receptionist, not a cheerleader.
+- NEVER use filler praise: no "Great!", "Nice!", "Wonderful!", "Perfect!", "Awesome!", "Oh wow!", "Excellent!", "Lovely!", "Fantastic!" at the start of replies.
+- Do not re-greet or re-welcome the caller on every turn. Acknowledge briefly and move forward.
 
 You ONLY answer questions about Innowrap Technologies (services, products, technologies, industries, engagement models, company info, contact process).
 
@@ -64,7 +67,7 @@ Never fabricate. If unsure, offer to connect them with the team.`;
 
 const EXTRACT_PROMPT = `You extract lead info from a voice conversation with Innowrap's AI agent. Given the transcript, return ONLY a strict JSON object (no markdown, no prose) with these fields, using null when unknown:
 {"enquiry_type": "sales"|"enquiry"|"careers"|"support"|null, "name": string|null, "company": string|null, "email": string|null, "phone": string|null, "industry": string|null, "project_type": string|null, "budget": string|null, "timeline": string|null, "requirements": string|null}
-enquiry_type: "careers" if about jobs/hiring; "sales" if project/business interest; "enquiry" if general info only; "support" if existing client. Only include values the user actually stated. Never invent.`;
+enquiry_type: "sales" if caller discussed a project, app, software, or business need. "careers" ONLY if they explicitly asked about jobs, hiring, or sending a resume — NOT for "hire you to build" or "application development". "enquiry" for general info only. When unsure, use "sales".`;
 
 type Msg = { role: "user" | "assistant"; content: string };
 type LeadFields = {
@@ -80,7 +83,11 @@ type LeadFields = {
   requirements: string | null;
 };
 
-async function extractAndUpsertLead(sessionId: string, transcript: Msg[]) {
+async function extractAndUpsertLead(
+  sessionId: string,
+  transcript: Msg[],
+  enquiryType?: string,
+) {
   try {
     const convo = transcript
       .map((m) => `${m.role === "user" ? "User" : "Agent"}: ${m.content}`)
@@ -103,6 +110,7 @@ async function extractAndUpsertLead(sessionId: string, transcript: Msg[]) {
 
     const { upsertLead } = await import("@/integrations/firebase/db");
     const fields: Record<string, string | Msg[]> = { transcript };
+    if (enquiryType) fields.enquiry_type = enquiryType;
     for (const k of [
       "enquiry_type",
       "name",
@@ -118,10 +126,43 @@ async function extractAndUpsertLead(sessionId: string, transcript: Msg[]) {
       const v = parsed[k];
       if (typeof v === "string" && v.trim()) fields[k] = v.trim();
     }
+    // Prefer explicit sales type from call flow over LLM misclassification
+    if (enquiryType === "sales") fields.enquiry_type = "sales";
     await upsertLead(sessionId, fields);
   } catch (e) {
     console.error("extractAndUpsertLead failed", e);
   }
+}
+
+function stripFillerPraise(text: string): string {
+  const filler =
+    /^(oh[,!\s]*)?(wow[,!\s]*)?(well[,!\s]*)?(great|nice|wonderful|perfect|awesome|excellent|fantastic|amazing|lovely|brilliant|super|sure|absolutely|certainly)[,!\s]*/i;
+  let out = text.trim();
+  for (let i = 0; i < 3; i++) {
+    const next = out.replace(filler, "").trim();
+    if (next === out) break;
+    out = next;
+  }
+  if (out.length > 0) {
+    out = out.charAt(0).toUpperCase() + out.slice(1);
+  }
+  return out;
+}
+
+function trimForVoice(reply: string): string {
+  let text = reply
+    .replace(/\*\*/g, "")
+    .replace(/^[-•]\s+/gm, "")
+    .trim();
+  text = stripFillerPraise(text);
+  const sentences = text.match(/[^.!?…]+[.!?…]+|[^.!?…]+$/g) || [text];
+  let out = sentences.slice(0, 2).join(" ").trim();
+  out = stripFillerPraise(out);
+  const words = out.split(/\s+/).filter(Boolean);
+  if (words.length > 22) {
+    out = `${words.slice(0, 22).join(" ")}.`;
+  }
+  return out || reply.trim();
 }
 
 export const askAgent = createServerFn({ method: "POST" })
@@ -132,6 +173,7 @@ export const askAgent = createServerFn({ method: "POST" })
       message?: string;
       sessionId?: string;
       turnContext?: string;
+      enquiryType?: string;
     };
     const callerText = (d?.callerText ?? d?.message)?.trim();
     if (!callerText) throw new Error("callerText required");
@@ -141,6 +183,7 @@ export const askAgent = createServerFn({ method: "POST" })
       callerText,
       sessionId: d.sessionId,
       turnContext: typeof d.turnContext === "string" ? d.turnContext.trim() : "",
+      enquiryType: typeof d.enquiryType === "string" ? d.enquiryType : "sales",
     };
   })
   .handler(async ({ data }) => {
@@ -148,14 +191,16 @@ export const askAgent = createServerFn({ method: "POST" })
       ? `${data.turnContext}\n\nCaller said: ${data.callerText}`
       : data.callerText;
 
-    const reply = await callGemini(
+    const rawReply = await callGemini(
       [
         { role: "system", content: SYSTEM_PROMPT },
         ...data.history.map((m) => ({ role: m.role, content: m.content })),
         { role: "user", content: modelUserMessage },
       ],
-      { maxOutputTokens: 120 },
+      { maxOutputTokens: 60, temperature: 0.5 },
     );
+
+    const reply = trimForVoice(rawReply);
 
     if (!reply.trim()) {
       throw new Error("Empty response from Gemini");
@@ -173,7 +218,7 @@ export const askAgent = createServerFn({ method: "POST" })
           { role: "assistant", content: reply },
         ];
 
-    void extractAndUpsertLead(data.sessionId, transcript);
+    void extractAndUpsertLead(data.sessionId, transcript, data.enquiryType);
 
     return { reply };
   });
