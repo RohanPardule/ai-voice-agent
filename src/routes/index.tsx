@@ -4,6 +4,7 @@ import { useServerFn } from "@tanstack/react-start";
 import { askAgent, getLeadContact, submitFeedback } from "@/lib/voice-agent.functions";
 import {
   isSpeechSynthesisSupported,
+  isSpeechPlaying,
   speakText,
   stopSpeech,
   unlockSpeechOnUserGesture,
@@ -278,7 +279,8 @@ interface SpeechRecognitionLike extends EventTarget {
   onerror: ((ev: any) => void) | null;
 }
 
-const SILENCE_MS = 3000;
+const SILENCE_MS = 2500;
+const POST_SPEAK_DELAY_MS = 600;
 
 type CallPhase = "language" | "services" | "chat";
 
@@ -387,6 +389,9 @@ function CallScreen({ sessionId, onHangUp }: { sessionId: string; onHangUp: () =
   const silenceTimerRef = useRef<number | null>(null);
   const listeningRef = useRef<boolean>(false);
   const shouldRestartRef = useRef<boolean>(false);
+  const speakingRef = useRef<boolean>(false);
+
+  const wait = (ms: number) => new Promise((r) => window.setTimeout(r, ms));
 
   useEffect(() => {
     const t = window.setInterval(() => setElapsed((e) => e + 1), 1000);
@@ -400,27 +405,6 @@ function CallScreen({ sessionId, onHangUp }: { sessionId: string; onHangUp: () =
     }
   };
 
-  const speak = useCallback(async (text: string, lang: string) => {
-    setAgentCaption(text);
-    setUserLive("");
-    await speakText(text, lang);
-  }, []);
-
-  const startRecognition = useCallback(() => {
-    const r = recognitionRef.current;
-    if (!r || listeningRef.current || !activeRef.current) return;
-    try {
-      r.lang = langRef.current;
-      r.start();
-      listeningRef.current = true;
-      shouldRestartRef.current = true;
-      setStatus("listening");
-      setHint("Listening…");
-    } catch {
-      /* ignore */
-    }
-  }, []);
-
   const stopRecognition = useCallback(() => {
     const r = recognitionRef.current;
     if (!r) return;
@@ -431,6 +415,39 @@ function CallScreen({ sessionId, onHangUp }: { sessionId: string; onHangUp: () =
       /* ignore */
     }
     listeningRef.current = false;
+  }, []);
+
+  const speak = useCallback(
+    async (text: string, lang: string) => {
+      stopRecognition();
+      clearSilenceTimer();
+      bufferRef.current = "";
+      setUserLive("");
+      speakingRef.current = true;
+      setStatus("speaking");
+      setHint("Speaking…");
+      setAgentCaption(text);
+      await speakText(text, lang);
+      await wait(POST_SPEAK_DELAY_MS);
+      speakingRef.current = false;
+    },
+    [stopRecognition],
+  );
+
+  const startRecognition = useCallback(() => {
+    const r = recognitionRef.current;
+    if (!r || listeningRef.current || !activeRef.current) return;
+    if (speakingRef.current || isSpeechPlaying()) return;
+    try {
+      r.lang = langRef.current;
+      r.start();
+      listeningRef.current = true;
+      shouldRestartRef.current = true;
+      setStatus("listening");
+      setHint("Listening…");
+    } catch {
+      /* ignore */
+    }
   }, []);
 
   const processUtterance = useCallback(
@@ -530,6 +547,8 @@ function CallScreen({ sessionId, onHangUp }: { sessionId: string; onHangUp: () =
     r.lang = langRef.current;
 
     r.onresult = (ev: any) => {
+      if (speakingRef.current || isSpeechPlaying()) return;
+
       let finalText = "";
       let interim = "";
       for (let i = ev.resultIndex; i < ev.results.length; i++) {
@@ -544,6 +563,7 @@ function CallScreen({ sessionId, onHangUp }: { sessionId: string; onHangUp: () =
       if (finalText || interim) {
         clearSilenceTimer();
         silenceTimerRef.current = window.setTimeout(() => {
+          if (speakingRef.current || isSpeechPlaying()) return;
           const text = bufferRef.current.trim();
           bufferRef.current = "";
           shouldRestartRef.current = false;
@@ -565,7 +585,7 @@ function CallScreen({ sessionId, onHangUp }: { sessionId: string; onHangUp: () =
 
     r.onend = () => {
       listeningRef.current = false;
-      if (shouldRestartRef.current && activeRef.current) {
+      if (shouldRestartRef.current && activeRef.current && !speakingRef.current && !isSpeechPlaying()) {
         try {
           r.start();
           listeningRef.current = true;
@@ -623,6 +643,7 @@ function CallScreen({ sessionId, onHangUp }: { sessionId: string; onHangUp: () =
 
   function handleHangUp() {
     activeRef.current = false;
+    speakingRef.current = false;
     shouldRestartRef.current = false;
     clearSilenceTimer();
     stopRecognition();
