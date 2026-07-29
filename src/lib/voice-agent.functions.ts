@@ -4,7 +4,13 @@ import { synthesizeGeminiTts } from "@/lib/gemini-tts";
 
 const SYSTEM_PROMPT = `# ROLE
 
-You are Innowrap Technologies' AI Sales Agent. Always refer to the company as "Innowrap Technologies" (never just "Innowrap") when speaking. You represent Innowrap Technologies professionally, conversationally, and briefly — you are on a voice call, so respond in 1–3 short spoken sentences, no markdown, no bullet lists.
+You are Innowrap Technologies' AI Sales Agent. Always refer to the company as "Innowrap Technologies" (never just "Innowrap") when speaking. You represent Innowrap Technologies professionally on a voice call.
+
+# VOICE STYLE (STRICT)
+- Maximum 2 short sentences per reply. Aim for under 25 words total.
+- Ask only ONE question per turn. Never stack multiple questions.
+- No markdown, bullet lists, or long explanations.
+- Sound natural and warm, not robotic.
 
 You ONLY answer questions about Innowrap Technologies (services, products, technologies, industries, engagement models, company info, contact process).
 
@@ -33,7 +39,18 @@ Clients include Diageo India, Tata Consumer Products (Mavic), Curly Tales, Digi1
 
 # LEAD QUALIFICATION
 
-Once the user shows interest in a service, naturally collect (one or two at a time): Name, Company, Email, Phone, Industry, Project Type, Budget, Timeline, Current Challenges.
+Once the user shows interest in a service, collect details naturally (one question at a time): Name, Company, Email, Phone, Industry, Project Type, Budget, Timeline, Current Challenges.
+
+# AMBIGUOUS OR UNCLEAR ANSWERS
+
+If the caller gives a number, fragment, or unclear short answer (e.g. "2.2", "5", "Q2", "around that") without clearly stating what it refers to:
+- Do NOT assume it is budget, timeline, team size, or anything else.
+- Ask a brief confirmation first, e.g. "Just to confirm — did you mean 2.2 months for timeline, or a budget figure?"
+- Only treat it as a qualified detail after they confirm.
+
+# CORRECTIONS AND UPDATES
+
+Callers may correct or update their name, company, email, budget, timeline, or any detail at any time. Accept gracefully: "Got it, I've noted that update." Never argue or repeat old incorrect info.
 
 # CONTACT
 
@@ -110,31 +127,52 @@ async function extractAndUpsertLead(sessionId: string, transcript: Msg[]) {
 
 export const askAgent = createServerFn({ method: "POST" })
   .inputValidator((data: unknown) => {
-    const d = data as { history?: Msg[]; message?: string; sessionId?: string };
-    if (!d?.message || typeof d.message !== "string") throw new Error("message required");
+    const d = data as {
+      history?: Msg[];
+      callerText?: string;
+      message?: string;
+      sessionId?: string;
+      turnContext?: string;
+    };
+    const callerText = (d?.callerText ?? d?.message)?.trim();
+    if (!callerText) throw new Error("callerText required");
     if (!d?.sessionId || typeof d.sessionId !== "string") throw new Error("sessionId required");
     return {
       history: Array.isArray(d.history) ? d.history.slice(-20) : [],
-      message: d.message,
+      callerText,
       sessionId: d.sessionId,
+      turnContext: typeof d.turnContext === "string" ? d.turnContext.trim() : "",
     };
   })
   .handler(async ({ data }) => {
-    const reply = await callGemini([
-      { role: "system", content: SYSTEM_PROMPT },
-      ...data.history.map((m) => ({ role: m.role, content: m.content })),
-      { role: "user", content: data.message },
-    ]);
+    const modelUserMessage = data.turnContext
+      ? `${data.turnContext}\n\nCaller said: ${data.callerText}`
+      : data.callerText;
+
+    const reply = await callGemini(
+      [
+        { role: "system", content: SYSTEM_PROMPT },
+        ...data.history.map((m) => ({ role: m.role, content: m.content })),
+        { role: "user", content: modelUserMessage },
+      ],
+      { maxOutputTokens: 120 },
+    );
 
     if (!reply.trim()) {
       throw new Error("Empty response from Gemini");
     }
 
-    const transcript: Msg[] = [
-      ...data.history,
-      { role: "user", content: data.message },
-      { role: "assistant", content: reply },
-    ];
+    const last = data.history[data.history.length - 1];
+    const userAlreadyLogged =
+      last?.role === "user" && last.content.trim() === data.callerText;
+
+    const transcript: Msg[] = userAlreadyLogged
+      ? [...data.history, { role: "assistant", content: reply }]
+      : [
+          ...data.history,
+          { role: "user", content: data.callerText },
+          { role: "assistant", content: reply },
+        ];
 
     void extractAndUpsertLead(data.sessionId, transcript);
 

@@ -13,7 +13,7 @@ function getGeminiApiKey(): string {
 
 export async function callGemini(
   messages: ChatMessage[],
-  opts?: { json?: boolean },
+  opts?: { json?: boolean; maxOutputTokens?: number },
 ): Promise<string> {
   const apiKey = getGeminiApiKey();
   if (!apiKey) throw new Error("Missing GEMINI_API_KEY");
@@ -34,6 +34,7 @@ export async function callGemini(
     contents,
     generationConfig: {
       temperature: 0.7,
+      ...(opts?.maxOutputTokens ? { maxOutputTokens: opts.maxOutputTokens } : {}),
       ...(opts?.json ? { responseMimeType: "application/json" } : {}),
     },
   };

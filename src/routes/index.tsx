@@ -333,6 +333,24 @@ function isPositiveServicesInterest(text: string): boolean {
   );
 }
 
+/** Short numeric or fragment answers that need confirmation before assuming meaning. */
+function isAmbiguousFragment(text: string): boolean {
+  const t = text.trim();
+  if (!t || t.length > 12) return false;
+  if (/^[\d.,]+\s*(k|m|lakh|lakhs|cr|crore|months?|weeks?|days?)?$/i.test(t)) return true;
+  if (/^q[1-4]$/i.test(t)) return true;
+  return /^\d[\d.,]*$/.test(t);
+}
+
+function buildTurnContext(langLabel: string, extra?: string): string {
+  const parts = [
+    `Respond in ${langLabel}.`,
+    "Keep to 2 short sentences max, one question only.",
+    extra,
+  ].filter(Boolean);
+  return parts.join(" ");
+}
+
 /** Collapse stuttered STT like "hihihi" → "hi" or "hello hello" → "hello". */
 function normalizeUserSpeech(text: string): string {
   let t = text.trim().replace(/\s+/g, " ");
@@ -609,10 +627,16 @@ function CallScreen({ sessionId, onHangUp }: { sessionId: string; onHangUp: () =
             careersPhaseRef.current = null;
             phaseRef.current = "chat";
             const langLabel = languageName(lang);
-            const directive = `Respond in ${langLabel}. The caller asked about careers earlier but now wants to know about Innowrap Technologies' services. Give a brief helpful overview and ask what they are exploring. Keep it concise for voice. Do not mention careers unless they ask.`;
-            const userMsg = `${directive}\n\nUser said: ${trimmed}`;
             const { reply } = await ask({
-              data: { history: historyRef.current, message: userMsg, sessionId },
+              data: {
+                history: historyRef.current,
+                callerText: trimmed,
+                sessionId,
+                turnContext: buildTurnContext(
+                  langLabel,
+                  "Caller asked about careers earlier but now wants services. Brief overview only; do not mention careers unless asked.",
+                ),
+              },
             });
             historyRef.current = [...historyRef.current, { role: "assistant", content: reply }];
             await speak(reply, lang);
@@ -683,10 +707,16 @@ function CallScreen({ sessionId, onHangUp }: { sessionId: string; onHangUp: () =
           phaseRef.current = "chat";
           const lang = langRef.current;
           const langLabel = languageName(lang);
-          const directive = `Respond in ${langLabel}. The user just told you which service they are looking for. Acknowledge their interest briefly and continue the sales conversation naturally. Keep it concise for voice.`;
-          const userMsg = `${directive}\n\nUser said: ${trimmed}`;
           const { reply } = await ask({
-            data: { history: historyRef.current, message: userMsg, sessionId },
+            data: {
+              history: historyRef.current,
+              callerText: trimmed,
+              sessionId,
+              turnContext: buildTurnContext(
+                langLabel,
+                "First service enquiry turn. Acknowledge interest briefly, then ask one qualifying question.",
+              ),
+            },
           });
           historyRef.current = [
             ...historyRef.current,
@@ -706,11 +736,17 @@ function CallScreen({ sessionId, onHangUp }: { sessionId: string; onHangUp: () =
         }
 
         const langLabel = languageName(langRef.current);
-        const directive = `Respond in ${langLabel}. Keep it concise and conversational for voice.`;
-        const userMsg = `${directive}\n\nUser said: ${trimmed}`;
+        const ambiguousHint = isAmbiguousFragment(trimmed)
+          ? "Caller's answer may be ambiguous (number or fragment). Confirm what they mean before assuming budget, timeline, or any detail."
+          : undefined;
 
         const { reply } = await ask({
-          data: { history: historyRef.current, message: userMsg, sessionId },
+          data: {
+            history: historyRef.current,
+            callerText: trimmed,
+            sessionId,
+            turnContext: buildTurnContext(langLabel, ambiguousHint),
+          },
         });
         historyRef.current = [
           ...historyRef.current,
