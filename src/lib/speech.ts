@@ -3,52 +3,15 @@ let voicesCache: SpeechSynthesisVoice[] | null = null;
 let speakChain: Promise<void> = Promise.resolve();
 let speakingActive = false;
 let speechGeneration = 0;
-let currentAudio: HTMLAudioElement | null = null;
-let currentObjectUrl: string | null = null;
-
-type SynthesizeFn = (text: string, lang: string) => Promise<string | null>;
-
-let geminiSynthesize: SynthesizeFn | null = null;
-let geminiTtsPreferred = false;
 
 function getSynth(): SpeechSynthesis | null {
   if (typeof window === "undefined" || !("speechSynthesis" in window)) return null;
   return window.speechSynthesis;
 }
 
-function revokeObjectUrl() {
-  if (currentObjectUrl) {
-    URL.revokeObjectURL(currentObjectUrl);
-    currentObjectUrl = null;
-  }
-}
-
-function stopCurrentAudio() {
-  if (currentAudio) {
-    currentAudio.pause();
-    currentAudio.src = "";
-    currentAudio = null;
-  }
-  revokeObjectUrl();
-}
-
-/** Enable Gemini TTS via server function (returns base64 WAV or null to fall back). */
-export function configureGeminiTts(opts: {
-  enabled: boolean;
-  synthesize: SynthesizeFn;
-}) {
-  geminiTtsPreferred = opts.enabled;
-  geminiSynthesize = opts.synthesize;
-}
-
-export function isGeminiTtsEnabled(): boolean {
-  return geminiTtsPreferred;
-}
-
 export function isSpeechPlaying(): boolean {
   const synth = getSynth();
-  const audioPlaying = Boolean(currentAudio && !currentAudio.paused && !currentAudio.ended);
-  return speakingActive || audioPlaying || Boolean(synth?.speaking || synth?.pending);
+  return speakingActive || Boolean(synth?.speaking || synth?.pending);
 }
 
 function clearResumeTimer() {
@@ -105,7 +68,7 @@ function pickVoice(voices: SpeechSynthesisVoice[], lang: string) {
   );
 }
 
-/** Split long replies so TTS doesn't cut off mid-paragraph. */
+/** Split long replies so Chrome TTS doesn't cut off mid-paragraph. */
 function splitForSpeech(text: string): string[] {
   const trimmed = text.trim();
   if (!trimmed) return [];
@@ -131,23 +94,15 @@ function splitForSpeech(text: string): string[] {
 }
 
 export function isSpeechSynthesisSupported(): boolean {
-  if (typeof window === "undefined") return false;
-  if (geminiTtsPreferred && typeof Audio !== "undefined") return true;
   return getSynth() !== null;
 }
 
 /** Call synchronously inside a user click/tap handler to unlock browser audio. */
 export function unlockSpeechOnUserGesture(): void {
   const synth = getSynth();
-  if (synth) {
-    synth.getVoices();
-    synth.resume();
-  }
-  if (typeof Audio !== "undefined") {
-    const silent = new Audio();
-    silent.volume = 0;
-    void silent.play().catch(() => {});
-  }
+  if (!synth) return;
+  synth.getVoices();
+  synth.resume();
 }
 
 export function stopSpeech(): void {
@@ -156,51 +111,10 @@ export function stopSpeech(): void {
   speakingActive = false;
   clearResumeTimer();
   speakChain = Promise.resolve();
-  stopCurrentAudio();
   if (synth) synth.cancel();
 }
 
-function playWavBase64(wavBase64: string, generation: number): Promise<void> {
-  return new Promise((resolve) => {
-    if (generation !== speechGeneration) {
-      resolve();
-      return;
-    }
-
-    stopCurrentAudio();
-
-    const binary = atob(wavBase64);
-    const bytes = new Uint8Array(binary.length);
-    for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
-
-    const blob = new Blob([bytes], { type: "audio/wav" });
-    const url = URL.createObjectURL(blob);
-    currentObjectUrl = url;
-
-    const audio = new Audio(url);
-    currentAudio = audio;
-
-    const finish = () => {
-      if (currentAudio === audio) {
-        stopCurrentAudio();
-      }
-      resolve();
-    };
-
-    audio.onended = finish;
-    audio.onerror = () => {
-      console.warn("Gemini TTS audio playback error");
-      finish();
-    };
-
-    void audio.play().catch((err) => {
-      console.warn("Gemini TTS play failed", err);
-      finish();
-    });
-  });
-}
-
-function speakOneBrowser(text: string, lang: string, generation: number): Promise<void> {
+function speakOne(text: string, lang: string, generation: number): Promise<void> {
   const synth = getSynth();
   if (!synth || !text.trim() || generation !== speechGeneration) return Promise.resolve();
 
@@ -261,25 +175,6 @@ function speakOneBrowser(text: string, lang: string, generation: number): Promis
         run();
       }),
   );
-}
-
-async function speakOne(text: string, lang: string, generation: number): Promise<void> {
-  if (generation !== speechGeneration || !text.trim()) return;
-
-  if (geminiTtsPreferred && geminiSynthesize) {
-    try {
-      const wavBase64 = await geminiSynthesize(text, lang);
-      if (generation !== speechGeneration) return;
-      if (wavBase64) {
-        await playWavBase64(wavBase64, generation);
-        return;
-      }
-    } catch (err) {
-      console.warn("Gemini TTS failed, falling back to browser speech", err);
-    }
-  }
-
-  await speakOneBrowser(text, lang, generation);
 }
 
 /** Queue speeches so they never cancel each other. Long text is split into sentences. */

@@ -1,6 +1,5 @@
 import { createServerFn } from "@tanstack/react-start";
 import { callGemini } from "@/lib/gemini";
-import { synthesizeGeminiTts } from "@/lib/gemini-tts";
 
 const SYSTEM_PROMPT = `# ROLE
 
@@ -177,23 +176,6 @@ export const askAgent = createServerFn({ method: "POST" })
     void extractAndUpsertLead(data.sessionId, transcript);
 
     return { reply };
-  });
-
-export const synthesizeSpeech = createServerFn({ method: "POST" })
-  .inputValidator((data: unknown) => {
-    const d = data as { text?: string; lang?: string };
-    if (!d?.text || typeof d.text !== "string") throw new Error("text required");
-    return { text: d.text.trim(), lang: d.lang ?? "en-US" };
-  })
-  .handler(async ({ data }) => {
-    const enabled =
-      process.env.GEMINI_TTS_ENABLED === "true" ||
-      process.env.GEMINI_TTS_ENABLED === "1";
-    if (!enabled) {
-      return { enabled: false as const, wavBase64: null };
-    }
-    const { wavBase64 } = await synthesizeGeminiTts(data.text);
-    return { enabled: true as const, wavBase64 };
   });
 
 export const recordCallSession = createServerFn({ method: "POST" })
