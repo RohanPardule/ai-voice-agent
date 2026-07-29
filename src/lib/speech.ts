@@ -1,6 +1,6 @@
 let resumeTimer: ReturnType<typeof setInterval> | null = null;
 let voicesCache: SpeechSynthesisVoice[] | null = null;
-let gesturePrimed = false;
+let speakChain: Promise<void> = Promise.resolve();
 
 function getSynth(): SpeechSynthesis | null {
   if (typeof window === "undefined" || !("speechSynthesis" in window)) return null;
@@ -18,7 +18,7 @@ function startResumeTimer(synth: SpeechSynthesis) {
   clearResumeTimer();
   resumeTimer = setInterval(() => {
     if (synth.speaking || synth.pending) synth.resume();
-  }, 100);
+  }, 200);
 }
 
 function loadVoices(synth: SpeechSynthesis): Promise<SpeechSynthesisVoice[]> {
@@ -47,7 +47,7 @@ function loadVoices(synth: SpeechSynthesis): Promise<SpeechSynthesisVoice[]> {
       synth.removeEventListener("voiceschanged", onVoicesChanged);
       voicesCache = synth.getVoices();
       resolve(voicesCache);
-    }, 500);
+    }, 300);
   });
 }
 
@@ -61,17 +61,6 @@ function pickVoice(voices: SpeechSynthesisVoice[], lang: string) {
   );
 }
 
-function buildUtterance(text: string, lang: string, voices: SpeechSynthesisVoice[]) {
-  const utterance = new SpeechSynthesisUtterance(text);
-  utterance.lang = lang;
-  utterance.rate = 0.95;
-  utterance.pitch = 1;
-  utterance.volume = 1;
-  const voice = pickVoice(voices, lang);
-  if (voice) utterance.voice = voice;
-  return utterance;
-}
-
 export function isSpeechSynthesisSupported(): boolean {
   return getSynth() !== null;
 }
@@ -82,94 +71,61 @@ export function unlockSpeechOnUserGesture(): void {
   if (!synth) return;
   synth.getVoices();
   synth.resume();
-  if (gesturePrimed) return;
-  gesturePrimed = true;
-  const prime = new SpeechSynthesisUtterance("ready");
-  prime.volume = 0.01;
-  prime.rate = 2;
-  prime.onend = () => synth.cancel();
-  prime.onerror = () => synth.cancel();
-  synth.speak(prime);
 }
 
 export function stopSpeech(): void {
   const synth = getSynth();
   if (!synth) return;
   clearResumeTimer();
+  speakChain = Promise.resolve();
   synth.cancel();
 }
 
-function speakOnce(
-  synth: SpeechSynthesis,
-  text: string,
-  lang: string,
-  voices: SpeechSynthesisVoice[],
-): Promise<void> {
-  return new Promise((resolve) => {
-    let settled = false;
-    let started = false;
-    let fallbackId = 0;
-    let retryId = 0;
+function speakOne(text: string, lang: string): Promise<void> {
+  const synth = getSynth();
+  if (!synth || !text.trim()) return Promise.resolve();
 
-    const finish = () => {
-      if (settled) return;
-      settled = true;
-      window.clearTimeout(fallbackId);
-      window.clearTimeout(retryId);
-      clearResumeTimer();
-      resolve();
-    };
+  return loadVoices(synth).then(
+    (voices) =>
+      new Promise<void>((resolve) => {
+        let done = false;
+        let safetyId = 0;
+        const finish = () => {
+          if (done) return;
+          done = true;
+          window.clearTimeout(safetyId);
+          clearResumeTimer();
+          resolve();
+        };
 
-    const run = (attempt: number) => {
-      const utterance = buildUtterance(text, lang, voices);
+        const utterance = new SpeechSynthesisUtterance(text);
+        utterance.lang = lang;
+        utterance.rate = 0.95;
+        utterance.pitch = 1;
+        utterance.volume = 1;
+        const voice = pickVoice(voices, lang);
+        if (voice) utterance.voice = voice;
 
-      utterance.onstart = () => {
-        started = true;
-        startResumeTimer(synth);
-      };
-      utterance.onend = () => finish();
-      utterance.onerror = (ev) => {
-        console.warn("TTS error:", ev.error, "attempt", attempt);
-        if (attempt < 2) {
-          window.setTimeout(() => run(attempt + 1), 200);
-          return;
-        }
-        finish();
-      };
-
-      synth.resume();
-      synth.speak(utterance);
-
-      retryId = window.setTimeout(() => {
-        if (started || settled) return;
-        synth.cancel();
-        if (attempt < 2) {
-          window.setTimeout(() => run(attempt + 1), 150);
-        } else {
-          console.warn("TTS never started for:", text.slice(0, 50));
+        utterance.onstart = () => startResumeTimer(synth);
+        utterance.onend = finish;
+        utterance.onerror = (ev) => {
+          if (ev.error !== "canceled") {
+            console.warn("TTS error:", ev.error);
+          }
           finish();
-        }
-      }, 800);
-    };
+        };
 
-    const fallbackMs = Math.min(90000, Math.max(10000, text.length * 80));
-    fallbackId = window.setTimeout(() => {
-      if (!synth.speaking && !synth.pending) finish();
-    }, fallbackMs);
+        safetyId = window.setTimeout(finish, Math.min(90000, Math.max(15000, text.length * 90)));
 
-    run(1);
-  });
+        synth.resume();
+        synth.speak(utterance);
+      }),
+  );
 }
 
-export async function speakText(text: string, lang = "en-US"): Promise<void> {
-  const synth = getSynth();
-  if (!synth || !text.trim()) return;
-
-  if (synth.speaking || synth.pending) {
-    synth.cancel();
-    await new Promise((r) => window.setTimeout(r, 100));
-  }
-
-  const voices = await loadVoices(synth);
-  await speakOnce(synth, text, lang, voices);
+/** Queue speeches so they never cancel each other. */
+export function speakText(text: string, lang = "en-US"): Promise<void> {
+  const next = speakChain.then(() => speakOne(text, lang));
+  speakChain = next.catch(() => {});
+  return next;
 }

@@ -45,6 +45,8 @@ type Screen = "landing" | "call" | "feedback";
 function Home() {
   const [screen, setScreen] = useState<Screen>("landing");
   const [sessionId, setSessionId] = useState<string>("");
+  const [isStartingCall, setIsStartingCall] = useState(false);
+  const [micError, setMicError] = useState<string | null>(null);
   const [prefill, setPrefill] = useState<{ name: string | null; email: string | null }>({
     name: null,
     email: null,
@@ -52,23 +54,42 @@ function Home() {
 
   const fetchContact = useServerFn(getLeadContact);
 
-  function startCall() {
-    unlockSpeechOnUserGesture();
-    void navigator.mediaDevices
-      ?.getUserMedia({ audio: true })
-      .then((stream) => stream.getTracks().forEach((t) => t.stop()))
-      .catch(() => {});
+  async function startCall() {
+    if (isStartingCall) return;
+    setMicError(null);
+    setIsStartingCall(true);
 
-    const id =
-      typeof crypto !== "undefined" && typeof crypto.randomUUID === "function"
-        ? crypto.randomUUID()
-        : Math.random().toString(36).slice(2) + Date.now().toString(36);
+    try {
+      unlockSpeechOnUserGesture();
 
-    // Start greeting inside the click gesture — browsers block TTS otherwise.
-    runCallGreeting(id);
+      if (!navigator.mediaDevices?.getUserMedia) {
+        setMicError("Microphone is not supported in this browser. Please use Chrome or Edge.");
+        return;
+      }
 
-    setSessionId(id);
-    setScreen("call");
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      stream.getTracks().forEach((track) => track.stop());
+
+      const id =
+        typeof crypto !== "undefined" && typeof crypto.randomUUID === "function"
+          ? crypto.randomUUID()
+          : Math.random().toString(36).slice(2) + Date.now().toString(36);
+
+      runCallGreeting(id);
+      setSessionId(id);
+      setScreen("call");
+    } catch (err) {
+      const denied =
+        err instanceof DOMException &&
+        (err.name === "NotAllowedError" || err.name === "PermissionDeniedError");
+      setMicError(
+        denied
+          ? "Microphone access is required. Please allow microphone when prompted, then try again."
+          : "Could not access your microphone. Check browser settings and try again.",
+      );
+    } finally {
+      setIsStartingCall(false);
+    }
   }
 
   async function hangUp() {
@@ -92,12 +113,20 @@ function Home() {
   if (screen === "call") return <CallScreen sessionId={sessionId} onHangUp={hangUp} />;
   if (screen === "feedback")
     return <FeedbackScreen sessionId={sessionId} prefill={prefill} onDone={finishFeedback} />;
-  return <Landing onCall={startCall} />;
+  return <Landing onCall={startCall} isStartingCall={isStartingCall} micError={micError} />;
 }
 
 /* -------------------- LANDING -------------------- */
 
-function Landing({ onCall }: { onCall: () => void }) {
+function Landing({
+  onCall,
+  isStartingCall,
+  micError,
+}: {
+  onCall: () => void | Promise<void>;
+  isStartingCall: boolean;
+  micError: string | null;
+}) {
   return (
     <div className="relative min-h-screen overflow-hidden bg-gradient-to-b from-background via-background to-secondary">
       <div className="pointer-events-none absolute inset-0 opacity-30">
@@ -143,17 +172,28 @@ function Landing({ onCall }: { onCall: () => void }) {
 
         <button
           type="button"
-          onClick={() => {
-            unlockSpeechOnUserGesture();
-            onCall();
-          }}
-          className="group relative mt-10 inline-flex items-center gap-3 rounded-full bg-primary px-10 py-5 text-lg font-semibold text-primary-foreground shadow-[0_10px_40px_-10px_oklch(0.55_0.15_320/0.6)] transition-transform hover:scale-[1.03]"
+          onClick={() => void onCall()}
+          disabled={isStartingCall}
+          className="group relative mt-10 inline-flex items-center gap-3 rounded-full bg-primary px-10 py-5 text-lg font-semibold text-primary-foreground shadow-[0_10px_40px_-10px_oklch(0.55_0.15_320/0.6)] transition-transform hover:scale-[1.03] disabled:cursor-wait disabled:opacity-80 disabled:hover:scale-100"
         >
           <span className="absolute inset-0 -z-10 animate-pulse rounded-full bg-primary/40 blur-xl" />
-          <Phone className="h-6 w-6" />
-          Call the Agent
+          {isStartingCall ? (
+            <Loader2 className="h-6 w-6 animate-spin" />
+          ) : (
+            <Phone className="h-6 w-6" />
+          )}
+          {isStartingCall ? "Allow microphone…" : "Call the Agent"}
         </button>
-        <p className="mt-3 text-xs text-muted-foreground">Free · no signup · voice only</p>
+        <p className="mt-3 text-xs text-muted-foreground">
+          {isStartingCall
+            ? "Please allow microphone access in the browser prompt"
+            : "Free · no signup · voice only"}
+        </p>
+        {micError && (
+          <p className="mt-2 max-w-md text-xs text-destructive" role="alert">
+            {micError}
+          </p>
+        )}
 
         <div className="mt-16 grid w-full grid-cols-1 gap-4 sm:grid-cols-3">
           <FeatureCard
