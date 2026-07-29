@@ -1,7 +1,8 @@
 import { createFileRoute, Link } from "@tanstack/react-router";
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { useServerFn } from "@tanstack/react-start";
-import { askAgent, getLeadContact, recordCallSession, submitFeedback } from "@/lib/voice-agent.functions";
+import { askAgentStream, getLeadContact, recordCallSession, submitFeedback } from "@/lib/voice-agent.functions";
+import { speakFromAskStream } from "@/lib/ask-stream";
 import {
   isSpeechSynthesisSupported,
   isSpeechPlaying,
@@ -490,7 +491,7 @@ function isHangUpIntent(text: string): boolean {
 }
 
 function CallScreen({ sessionId, onHangUp }: { sessionId: string; onHangUp: () => void | Promise<void> }) {
-  const ask = useServerFn(askAgent);
+  const askStream = useServerFn(askAgentStream);
   const saveSession = useServerFn(recordCallSession);
   const [status, setStatus] = useState<Status>("idle");
   const [hint, setHint] = useState<string>("Connecting…");
@@ -571,6 +572,40 @@ function CallScreen({ sessionId, onHangUp }: { sessionId: string; onHangUp: () =
       speakingRef.current = false;
     },
     [stopRecognition],
+  );
+
+  const askAndSpeak = useCallback(
+    async (params: {
+      history: Msg[];
+      callerText: string;
+      sessionId: string;
+      turnContext: string;
+      enquiryType: string;
+    }) => {
+      stopRecognition();
+      setUserLive("");
+      setStatus("thinking");
+      setHint("Processing…");
+
+      const response = await askStream({ data: params });
+      if (!(response instanceof Response) || !response.body) {
+        throw new Error("Streaming response unavailable");
+      }
+
+      speakingRef.current = true;
+      const reply = await speakFromAskStream(response, langRef.current, {
+        onSpeakingStart: () => {
+          setStatus("speaking");
+          setHint("Speaking…");
+        },
+        onCaption: setAgentCaption,
+      });
+
+      await wait(POST_SPEAK_DELAY_MS);
+      speakingRef.current = false;
+      return reply;
+    },
+    [askStream, stopRecognition],
   );
 
   const startRecognition = useCallback(() => {
@@ -661,20 +696,17 @@ function CallScreen({ sessionId, onHangUp }: { sessionId: string; onHangUp: () =
             phaseRef.current = "chat";
             await persistSession("sales");
             const langLabel = languageName(lang);
-            const { reply } = await ask({
-              data: {
-                history: historyRef.current,
-                callerText: trimmed,
-                sessionId,
-                turnContext: buildTurnContext(
-                  langLabel,
-                  "Brief services overview. One question.",
-                ),
-                enquiryType: "sales",
-              },
+            const reply = await askAndSpeak({
+              history: historyRef.current,
+              callerText: trimmed,
+              sessionId,
+              turnContext: buildTurnContext(
+                langLabel,
+                "Brief services overview. One question.",
+              ),
+              enquiryType: "sales",
             });
             historyRef.current = [...historyRef.current, { role: "assistant", content: reply }];
-            await speak(reply, lang);
             if (activeRef.current) startRecognition();
             return;
           }
@@ -742,26 +774,21 @@ function CallScreen({ sessionId, onHangUp }: { sessionId: string; onHangUp: () =
           phaseRef.current = "chat";
           const lang = langRef.current;
           const langLabel = languageName(lang);
-          const { reply } = await ask({
-            data: {
-              history: historyRef.current,
-              callerText: trimmed,
-              sessionId,
-              turnContext: buildTurnContext(
-                langLabel,
-                "Sales call. Acknowledge briefly, ask one question.",
-              ),
-              enquiryType: "sales",
-            },
+          const reply = await askAndSpeak({
+            history: historyRef.current,
+            callerText: trimmed,
+            sessionId,
+            turnContext: buildTurnContext(
+              langLabel,
+              "Sales call. Acknowledge briefly, ask one question.",
+            ),
+            enquiryType: "sales",
           });
           historyRef.current = [
             ...historyRef.current,
             { role: "user", content: trimmed },
             { role: "assistant", content: reply },
           ];
-          setStatus("speaking");
-          setHint("Speaking…");
-          await speak(reply, lang);
           if (activeRef.current) startRecognition();
           return;
         }
@@ -776,23 +803,18 @@ function CallScreen({ sessionId, onHangUp }: { sessionId: string; onHangUp: () =
           ? "Caller's answer may be ambiguous (number or fragment). Confirm what they mean before assuming budget, timeline, or any detail."
           : undefined;
 
-        const { reply } = await ask({
-          data: {
-            history: historyRef.current,
-            callerText: trimmed,
-            sessionId,
-            turnContext: buildTurnContext(langLabel, ambiguousHint),
-            enquiryType: "sales",
-          },
+        const reply = await askAndSpeak({
+          history: historyRef.current,
+          callerText: trimmed,
+          sessionId,
+          turnContext: buildTurnContext(langLabel, ambiguousHint),
+          enquiryType: "sales",
         });
         historyRef.current = [
           ...historyRef.current,
           { role: "user", content: trimmed },
           { role: "assistant", content: reply },
         ];
-        setStatus("speaking");
-        setHint("Speaking…");
-        await speak(reply, langRef.current);
         if (activeRef.current) startRecognition();
       } catch (err) {
         console.error("Agent error:", err);
@@ -813,7 +835,7 @@ function CallScreen({ sessionId, onHangUp }: { sessionId: string; onHangUp: () =
         }
       }
     },
-    [ask, finishCareersAndHangUp, persistSession, refuseOffTopic, sessionId, speak, startRecognition, stopRecognition],
+    [askAndSpeak, finishCareersAndHangUp, persistSession, refuseOffTopic, sessionId, speak, startRecognition, stopRecognition],
   );
 
   const setupRecognition = useCallback(() => {

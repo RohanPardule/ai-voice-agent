@@ -1,5 +1,5 @@
 import { createServerFn } from "@tanstack/react-start";
-import { callGemini } from "@/lib/gemini";
+import { callGemini, streamGemini } from "@/lib/gemini";
 
 const SYSTEM_PROMPT = `# ROLE
 
@@ -70,6 +70,14 @@ const EXTRACT_PROMPT = `You extract lead info from a voice conversation with Inn
 enquiry_type: "sales" if caller discussed a project, app, software, or business need. "careers" ONLY if they explicitly asked about jobs, hiring, or sending a resume — NOT for "hire you to build" or "application development". "enquiry" for general info only. When unsure, use "sales".`;
 
 type Msg = { role: "user" | "assistant"; content: string };
+export type AskAgentInput = {
+  history: Msg[];
+  callerText: string;
+  sessionId: string;
+  turnContext: string;
+  enquiryType: string;
+};
+
 type LeadFields = {
   enquiry_type: string | null;
   name: string | null;
@@ -165,40 +173,60 @@ function trimForVoice(reply: string): string {
   return out || reply.trim();
 }
 
-export const askAgent = createServerFn({ method: "POST" })
-  .inputValidator((data: unknown) => {
-    const d = data as {
-      history?: Msg[];
-      callerText?: string;
-      message?: string;
-      sessionId?: string;
-      turnContext?: string;
-      enquiryType?: string;
-    };
-    const callerText = (d?.callerText ?? d?.message)?.trim();
-    if (!callerText) throw new Error("callerText required");
-    if (!d?.sessionId || typeof d.sessionId !== "string") throw new Error("sessionId required");
-    return {
-      history: Array.isArray(d.history) ? d.history.slice(-20) : [],
-      callerText,
-      sessionId: d.sessionId,
-      turnContext: typeof d.turnContext === "string" ? d.turnContext.trim() : "",
-      enquiryType: typeof d.enquiryType === "string" ? d.enquiryType : "sales",
-    };
-  })
-  .handler(async ({ data }) => {
-    const modelUserMessage = data.turnContext
-      ? `${data.turnContext}\n\nCaller said: ${data.callerText}`
-      : data.callerText;
+function validateAskInput(data: unknown): AskAgentInput {
+  const d = data as {
+    history?: Msg[];
+    callerText?: string;
+    message?: string;
+    sessionId?: string;
+    turnContext?: string;
+    enquiryType?: string;
+  };
+  const callerText = (d?.callerText ?? d?.message)?.trim();
+  if (!callerText) throw new Error("callerText required");
+  if (!d?.sessionId || typeof d.sessionId !== "string") throw new Error("sessionId required");
+  return {
+    history: Array.isArray(d.history) ? d.history.slice(-20) : [],
+    callerText,
+    sessionId: d.sessionId,
+    turnContext: typeof d.turnContext === "string" ? d.turnContext.trim() : "",
+    enquiryType: typeof d.enquiryType === "string" ? d.enquiryType : "sales",
+  };
+}
 
-    const rawReply = await callGemini(
-      [
-        { role: "system", content: SYSTEM_PROMPT },
-        ...data.history.map((m) => ({ role: m.role, content: m.content })),
-        { role: "user", content: modelUserMessage },
-      ],
-      { maxOutputTokens: 60, temperature: 0.5 },
-    );
+function buildAskMessages(data: AskAgentInput) {
+  const modelUserMessage = data.turnContext
+    ? `${data.turnContext}\n\nCaller said: ${data.callerText}`
+    : data.callerText;
+
+  return [
+    { role: "system", content: SYSTEM_PROMPT },
+    ...data.history.map((m) => ({ role: m.role, content: m.content })),
+    { role: "user", content: modelUserMessage },
+  ];
+}
+
+function buildTranscript(data: AskAgentInput, reply: string): Msg[] {
+  const last = data.history[data.history.length - 1];
+  const userAlreadyLogged =
+    last?.role === "user" && last.content.trim() === data.callerText;
+
+  return userAlreadyLogged
+    ? [...data.history, { role: "assistant", content: reply }]
+    : [
+        ...data.history,
+        { role: "user", content: data.callerText },
+        { role: "assistant", content: reply },
+      ];
+}
+
+export const askAgent = createServerFn({ method: "POST" })
+  .inputValidator(validateAskInput)
+  .handler(async ({ data }) => {
+    const rawReply = await callGemini(buildAskMessages(data), {
+      maxOutputTokens: 60,
+      temperature: 0.5,
+    });
 
     const reply = trimForVoice(rawReply);
 
@@ -206,21 +234,57 @@ export const askAgent = createServerFn({ method: "POST" })
       throw new Error("Empty response from Gemini");
     }
 
-    const last = data.history[data.history.length - 1];
-    const userAlreadyLogged =
-      last?.role === "user" && last.content.trim() === data.callerText;
-
-    const transcript: Msg[] = userAlreadyLogged
-      ? [...data.history, { role: "assistant", content: reply }]
-      : [
-          ...data.history,
-          { role: "user", content: data.callerText },
-          { role: "assistant", content: reply },
-        ];
-
+    const transcript = buildTranscript(data, reply);
     void extractAndUpsertLead(data.sessionId, transcript, data.enquiryType);
 
     return { reply };
+  });
+
+export const askAgentStream = createServerFn({ method: "POST" })
+  .inputValidator(validateAskInput)
+  .handler(async ({ data }) => {
+    const encoder = new TextEncoder();
+    const write = (
+      controller: ReadableStreamDefaultController<Uint8Array>,
+      event: Record<string, unknown>,
+    ) => {
+      controller.enqueue(encoder.encode(`${JSON.stringify(event)}\n`));
+    };
+
+    const stream = new ReadableStream<Uint8Array>({
+      async start(controller) {
+        try {
+          let full = "";
+          for await (const delta of streamGemini(buildAskMessages(data), {
+            maxOutputTokens: 60,
+            temperature: 0.5,
+          })) {
+            full += delta;
+            write(controller, { type: "token", text: delta });
+          }
+
+          const reply = trimForVoice(full);
+          if (!reply.trim()) {
+            write(controller, { type: "error", message: "Empty response from Gemini" });
+            controller.close();
+            return;
+          }
+
+          const transcript = buildTranscript(data, reply);
+          void extractAndUpsertLead(data.sessionId, transcript, data.enquiryType);
+          write(controller, { type: "done", reply });
+        } catch (e) {
+          const message = e instanceof Error ? e.message : String(e);
+          write(controller, { type: "error", message });
+        } finally {
+          controller.close();
+        }
+      },
+    });
+
+    return new Response(stream, {
+      headers: { "Content-Type": "application/x-ndjson" },
+    });
   });
 
 export const recordCallSession = createServerFn({ method: "POST" })

@@ -220,3 +220,28 @@ export function preloadSpeechVoices(): void {
   synth.getVoices();
   void loadVoices(synth);
 }
+
+/** Queue speech without blocking — safe to call repeatedly while tokens stream in. */
+export function enqueueSpeakText(
+  text: string,
+  lang = "en-US",
+  opts?: { onChunkStart?: (chunk: string) => void },
+): void {
+  const generation = speechGeneration;
+  const chunks = splitForSpeech(text);
+  if (chunks.length === 0) return;
+  speakingActive = true;
+  for (const chunk of chunks) {
+    speakChain = speakChain
+      .then(() => {
+        if (generation !== speechGeneration) return;
+        return speakOne(chunk, lang, generation, () => opts?.onChunkStart?.(chunk));
+      })
+      .catch(() => {});
+  }
+}
+
+/** Wait until all queued speech has finished. */
+export function waitForSpeechQueue(): Promise<void> {
+  return speakChain;
+}
