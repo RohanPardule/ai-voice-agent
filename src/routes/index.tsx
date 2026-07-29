@@ -529,9 +529,11 @@ function CallScreen({ sessionId, onHangUp }: { sessionId: string; onHangUp: () =
           const msg = err instanceof Error ? err.message : String(err);
           const errMsg = msg.includes("GEMINI_API_KEY")
             ? "I'm having trouble connecting right now. Please try again in a moment."
-            : msg.includes("Gemini") || msg.includes("Empty response")
-              ? "I couldn't get a response just now. Please say that again."
-              : "Sorry, something went wrong. Could you repeat that?";
+            : msg.includes("invalid or was disabled") || msg.includes("leaked")
+              ? "The AI service key needs to be updated. Please contact support."
+              : msg.includes("Gemini") || msg.includes("Empty response")
+                ? "I couldn't get a response just now. Please say that again."
+                : "Sorry, something went wrong. Could you repeat that?";
           await speak(errMsg, langRef.current);
           setHint("Listening…");
           startRecognition();

@@ -49,13 +49,40 @@ export async function callGemini(
     body: JSON.stringify(body),
   });
 
+  const raw = await res.text();
   if (!res.ok) {
-    throw new Error(`Gemini ${res.status}: ${await res.text()}`);
+    try {
+      const errJson = JSON.parse(raw) as { error?: { message?: string; status?: string } };
+      const msg = errJson.error?.message ?? raw;
+      if (res.status === 403 && /leaked|permission/i.test(msg)) {
+        throw new Error(
+          "Gemini API key is invalid or was disabled. Create a new key at Google AI Studio and update GEMINI_API_KEY in .env",
+        );
+      }
+      throw new Error(`Gemini ${res.status}: ${msg}`);
+    } catch (e) {
+      if (e instanceof Error && e.message.includes("Gemini API key")) throw e;
+      throw new Error(`Gemini ${res.status}: ${raw}`);
+    }
   }
 
-  const json = (await res.json()) as {
-    candidates?: Array<{ content?: { parts?: Array<{ text?: string }> } }>;
+  const json = JSON.parse(raw) as {
+    candidates?: Array<{
+      content?: { parts?: Array<{ text?: string }> };
+      finishReason?: string;
+    }>;
+    promptFeedback?: { blockReason?: string };
   };
 
-  return json.candidates?.[0]?.content?.parts?.[0]?.text?.trim() ?? "";
+  if (json.promptFeedback?.blockReason) {
+    throw new Error(`Gemini blocked the prompt: ${json.promptFeedback.blockReason}`);
+  }
+
+  const text = json.candidates?.[0]?.content?.parts?.[0]?.text?.trim() ?? "";
+  const finishReason = json.candidates?.[0]?.finishReason;
+  if (!text && finishReason && finishReason !== "STOP") {
+    throw new Error(`Gemini returned no text (reason: ${finishReason})`);
+  }
+
+  return text;
 }
