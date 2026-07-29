@@ -279,8 +279,26 @@ interface SpeechRecognitionLike extends EventTarget {
   onerror: ((ev: any) => void) | null;
 }
 
-const SILENCE_MS = 2500;
 const POST_SPEAK_DELAY_MS = 600;
+
+/** Collapse stuttered STT like "hihihi" → "hi" or "hello hello" → "hello". */
+function normalizeUserSpeech(text: string): string {
+  let t = text.trim().replace(/\s+/g, " ");
+  if (!t) return "";
+
+  for (let len = 1; len <= Math.floor(t.length / 2); len++) {
+    if (t.length % len !== 0) continue;
+    const chunk = t.slice(0, len);
+    if (chunk.repeat(t.length / len) === t) {
+      t = chunk;
+      break;
+    }
+  }
+
+  const words = t.split(" ");
+  const deduped = words.filter((w, i) => i === 0 || w !== words[i - 1]);
+  return deduped.join(" ");
+}
 
 type CallPhase = "language" | "services" | "chat";
 
@@ -385,10 +403,10 @@ function CallScreen({ sessionId, onHangUp }: { sessionId: string; onHangUp: () =
   const activeRef = useRef<boolean>(true);
   const phaseRef = useRef<CallPhase>("language");
   const bufferRef = useRef<string>("");
-  const silenceTimerRef = useRef<number | null>(null);
   const listeningRef = useRef<boolean>(false);
   const shouldRestartRef = useRef<boolean>(false);
   const speakingRef = useRef<boolean>(false);
+  const intentionalStopRef = useRef<boolean>(false);
 
   const wait = (ms: number) => new Promise((r) => window.setTimeout(r, ms));
 
@@ -397,30 +415,27 @@ function CallScreen({ sessionId, onHangUp }: { sessionId: string; onHangUp: () =
     return () => window.clearInterval(t);
   }, []);
 
-  const clearSilenceTimer = () => {
-    if (silenceTimerRef.current) {
-      window.clearTimeout(silenceTimerRef.current);
-      silenceTimerRef.current = null;
-    }
-  };
-
   const stopRecognition = useCallback(() => {
     const r = recognitionRef.current;
     if (!r) return;
     shouldRestartRef.current = false;
+    intentionalStopRef.current = true;
     try {
-      r.stop();
+      r.abort();
     } catch {
-      /* ignore */
+      try {
+        r.stop();
+      } catch {
+        /* ignore */
+      }
     }
     listeningRef.current = false;
+    bufferRef.current = "";
   }, []);
 
   const speak = useCallback(
     async (text: string, lang: string) => {
       stopRecognition();
-      clearSilenceTimer();
-      bufferRef.current = "";
       setUserLive("");
       speakingRef.current = true;
       setStatus("speaking");
@@ -438,6 +453,7 @@ function CallScreen({ sessionId, onHangUp }: { sessionId: string; onHangUp: () =
     if (!r || listeningRef.current || !activeRef.current) return;
     if (speakingRef.current || isSpeechPlaying()) return;
     try {
+      intentionalStopRef.current = false;
       r.lang = langRef.current;
       bufferRef.current = "";
       setUserLive("");
@@ -453,7 +469,7 @@ function CallScreen({ sessionId, onHangUp }: { sessionId: string; onHangUp: () =
 
   const processUtterance = useCallback(
     async (text: string) => {
-      const trimmed = text.trim();
+      const trimmed = normalizeUserSpeech(text);
       if (!trimmed) {
         if (activeRef.current) startRecognition();
         return;
@@ -548,47 +564,22 @@ function CallScreen({ sessionId, onHangUp }: { sessionId: string; onHangUp: () =
     const SR = w.SpeechRecognition || w.webkitSpeechRecognition;
     if (!SR) return null;
     const r: SpeechRecognitionLike = new SR();
-    r.continuous = true;
+    r.continuous = false;
     r.interimResults = true;
     r.lang = langRef.current;
 
     r.onresult = (ev: any) => {
       if (speakingRef.current || isSpeechPlaying()) return;
 
-      let finalized = "";
-      for (let i = 0; i < ev.results.length; i++) {
-        if (ev.results[i].isFinal) {
-          finalized += ev.results[i][0]?.transcript ?? "";
-        }
-      }
-      bufferRef.current = finalized.trim();
-
-      let interim = "";
+      let latest = "";
       for (let i = ev.resultIndex; i < ev.results.length; i++) {
-        if (!ev.results[i].isFinal) {
-          interim += ev.results[i][0]?.transcript ?? "";
-        }
+        latest += ev.results[i][0]?.transcript ?? "";
       }
+      latest = latest.trim();
+      if (!latest) return;
 
-      const live = [bufferRef.current, interim.trim()].filter(Boolean).join(" ").trim();
-      if (live) setUserLive(live);
-
-      if (finalized || interim) {
-        clearSilenceTimer();
-        silenceTimerRef.current = window.setTimeout(() => {
-          if (speakingRef.current || isSpeechPlaying()) return;
-          const text = bufferRef.current.trim();
-          bufferRef.current = "";
-          shouldRestartRef.current = false;
-          try {
-            r.stop();
-          } catch {
-            /* ignore */
-          }
-          listeningRef.current = false;
-          processUtterance(text);
-        }, SILENCE_MS);
-      }
+      bufferRef.current = latest;
+      setUserLive(normalizeUserSpeech(latest));
     };
 
     r.onerror = (ev: any) => {
@@ -598,8 +589,26 @@ function CallScreen({ sessionId, onHangUp }: { sessionId: string; onHangUp: () =
 
     r.onend = () => {
       listeningRef.current = false;
+
+      if (intentionalStopRef.current) {
+        intentionalStopRef.current = false;
+        return;
+      }
+
+      const text = normalizeUserSpeech(bufferRef.current);
+      bufferRef.current = "";
+
+      if (text && activeRef.current && !speakingRef.current && !isSpeechPlaying()) {
+        shouldRestartRef.current = false;
+        void processUtterance(text);
+        return;
+      }
+
       if (shouldRestartRef.current && activeRef.current && !speakingRef.current && !isSpeechPlaying()) {
         try {
+          bufferRef.current = "";
+          setUserLive("");
+          r.lang = langRef.current;
           r.start();
           listeningRef.current = true;
         } catch {
@@ -643,7 +652,7 @@ function CallScreen({ sessionId, onHangUp }: { sessionId: string; onHangUp: () =
     return () => {
       cancelled = true;
       shouldRestartRef.current = false;
-      clearSilenceTimer();
+      intentionalStopRef.current = true;
       try {
         recognitionRef.current?.abort();
       } catch {
@@ -657,8 +666,8 @@ function CallScreen({ sessionId, onHangUp }: { sessionId: string; onHangUp: () =
   function handleHangUp() {
     activeRef.current = false;
     speakingRef.current = false;
+    intentionalStopRef.current = true;
     shouldRestartRef.current = false;
-    clearSilenceTimer();
     stopRecognition();
     stopSpeech();
     greetingPromises.delete(sessionId);
