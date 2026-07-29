@@ -1,8 +1,9 @@
 import { createFileRoute, Link } from "@tanstack/react-router";
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { useServerFn } from "@tanstack/react-start";
-import { askAgent, getLeadContact, recordCallSession, submitFeedback } from "@/lib/voice-agent.functions";
+import { askAgent, getLeadContact, recordCallSession, submitFeedback, synthesizeSpeech } from "@/lib/voice-agent.functions";
 import {
+  configureGeminiTts,
   isSpeechSynthesisSupported,
   isSpeechPlaying,
   speakText,
@@ -55,6 +56,21 @@ function Home() {
   });
 
   const fetchContact = useServerFn(getLeadContact);
+  const synthSpeech = useServerFn(synthesizeSpeech);
+
+  useEffect(() => {
+    const enabled =
+      import.meta.env.VITE_GEMINI_TTS_ENABLED === "true" ||
+      import.meta.env.VITE_GEMINI_TTS_ENABLED === "1";
+    configureGeminiTts({
+      enabled,
+      synthesize: async (text, lang) => {
+        const res = await synthSpeech({ data: { text, lang } });
+        if (!res.enabled || !res.wavBase64) return null;
+        return res.wavBase64;
+      },
+    });
+  }, [synthSpeech]);
 
   async function startCall() {
     if (isStartingCall) return;
