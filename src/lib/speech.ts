@@ -114,7 +114,12 @@ export function stopSpeech(): void {
   if (synth) synth.cancel();
 }
 
-function speakOne(text: string, lang: string, generation: number): Promise<void> {
+function speakOne(
+  text: string,
+  lang: string,
+  generation: number,
+  onStart?: () => void,
+): Promise<void> {
   const synth = getSynth();
   if (!synth || !text.trim() || generation !== speechGeneration) return Promise.resolve();
 
@@ -128,6 +133,7 @@ function speakOne(text: string, lang: string, generation: number): Promise<void>
         let done = false;
         let safetyId = 0;
         let interruptRetries = 0;
+        let started = false;
 
         const finish = () => {
           if (done) return;
@@ -150,7 +156,13 @@ function speakOne(text: string, lang: string, generation: number): Promise<void>
           const voice = pickVoice(voices, lang);
           if (voice) utterance.voice = voice;
 
-          utterance.onstart = () => startResumeTimer(synth);
+          utterance.onstart = () => {
+            if (!started) {
+              started = true;
+              onStart?.();
+            }
+            startResumeTimer(synth);
+          };
           utterance.onend = finish;
           utterance.onerror = (ev) => {
             if (generation !== speechGeneration || ev.error === "canceled") {
@@ -178,14 +190,20 @@ function speakOne(text: string, lang: string, generation: number): Promise<void>
 }
 
 /** Queue speeches so they never cancel each other. Long text is split into sentences. */
-export async function speakText(text: string, lang = "en-US"): Promise<void> {
+export async function speakText(
+  text: string,
+  lang = "en-US",
+  opts?: { onChunkStart?: (chunk: string) => void },
+): Promise<void> {
   const generation = speechGeneration;
   const chunks = splitForSpeech(text);
   speakingActive = true;
   try {
     for (const chunk of chunks) {
       if (generation !== speechGeneration) return;
-      const next = speakChain.then(() => speakOne(chunk, lang, generation));
+      const next = speakChain.then(() =>
+        speakOne(chunk, lang, generation, () => opts?.onChunkStart?.(chunk)),
+      );
       speakChain = next.catch(() => {});
       await next;
       if (generation !== speechGeneration) return;
@@ -193,4 +211,12 @@ export async function speakText(text: string, lang = "en-US"): Promise<void> {
   } finally {
     if (generation === speechGeneration) speakingActive = false;
   }
+}
+
+/** Load voices early on call start to reduce first-speak delay. */
+export function preloadSpeechVoices(): void {
+  const synth = getSynth();
+  if (!synth) return;
+  synth.getVoices();
+  void loadVoices(synth);
 }

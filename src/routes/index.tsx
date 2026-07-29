@@ -5,6 +5,7 @@ import { askAgent, getLeadContact, recordCallSession, submitFeedback } from "@/l
 import {
   isSpeechSynthesisSupported,
   isSpeechPlaying,
+  preloadSpeechVoices,
   speakText,
   stopSpeech,
   unlockSpeechOnUserGesture,
@@ -411,12 +412,10 @@ function runCallGreeting(
   const promise = (async () => {
     const line1 = "Hi, welcome to Innowrap Technologies.";
     if (cancelledGreetings.has(sessionId)) return;
-    notify(line1);
-    await speakText(line1, "en-US");
+    await speakText(line1, "en-US", { onChunkStart: () => notify(line1) });
     if (cancelledGreetings.has(sessionId)) return;
     const line2 = "Which language would you like to continue in?";
-    notify(line2);
-    await speakText(line2, "en-US");
+    await speakText(line2, "en-US", { onChunkStart: () => notify(line2) });
     if (cancelledGreetings.has(sessionId)) return;
     greetedSessions.add(sessionId);
   })();
@@ -561,8 +560,13 @@ function CallScreen({ sessionId, onHangUp }: { sessionId: string; onHangUp: () =
       speakingRef.current = true;
       setStatus("speaking");
       setHint("Speaking…");
-      setAgentCaption(text);
-      await speakText(text, lang);
+      let caption = "";
+      await speakText(text, lang, {
+        onChunkStart: (chunk) => {
+          caption = caption ? `${caption} ${chunk}` : chunk;
+          setAgentCaption(caption);
+        },
+      });
       await wait(POST_SPEAK_DELAY_MS);
       speakingRef.current = false;
     },
@@ -891,9 +895,9 @@ function CallScreen({ sessionId, onHangUp }: { sessionId: string; onHangUp: () =
 
     setStatus("speaking");
     setHint("Speaking…");
-    setAgentCaption("Hi, welcome to Innowrap Technologies.");
 
     let cancelled = false;
+    preloadSpeechVoices();
     void runCallGreeting(sessionId, (line) => {
       if (!cancelled) setAgentCaption(line);
     }).then(() => {
