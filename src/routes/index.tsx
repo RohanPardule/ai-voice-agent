@@ -303,8 +303,7 @@ function runCallGreeting(
     const line1 = "Hi, welcome to Innowrap Technologies.";
     notify(line1);
     await speakText(line1, "en-US");
-    const line2 =
-      "Which language would you like to continue in? For example, English, Hindi, or another language.";
+    const line2 = "Which language would you like to continue in?";
     notify(line2);
     await speakText(line2, "en-US");
     greetedSessions.add(sessionId);
@@ -347,7 +346,7 @@ function languageName(code: string): string {
 }
 
 const LANGUAGE_REPROMPT =
-  "Sorry, I didn't catch that. Which language would you like to continue in? For example, English, Hindi, or another language.";
+  "Sorry, I didn't catch that. Which language would you like to continue in?";
 
 function serviceQuestion(code: string): string {
   const questions: Record<string, string> = {
@@ -440,6 +439,8 @@ function CallScreen({ sessionId, onHangUp }: { sessionId: string; onHangUp: () =
     if (speakingRef.current || isSpeechPlaying()) return;
     try {
       r.lang = langRef.current;
+      bufferRef.current = "";
+      setUserLive("");
       r.start();
       listeningRef.current = true;
       shouldRestartRef.current = true;
@@ -459,6 +460,7 @@ function CallScreen({ sessionId, onHangUp }: { sessionId: string; onHangUp: () =
       }
       setStatus("thinking");
       setHint("Processing…");
+      setUserLive("");
 
       try {
         stopRecognition();
@@ -520,13 +522,15 @@ function CallScreen({ sessionId, onHangUp }: { sessionId: string; onHangUp: () =
         await speak(reply, langRef.current);
         if (activeRef.current) startRecognition();
       } catch (err) {
-        console.error(err);
+        console.error("Agent error:", err);
         if (activeRef.current) {
           setStatus("speaking");
           setHint("Speaking…");
-          const errMsg =
-            err instanceof Error && err.message.includes("GEMINI_API_KEY")
-              ? "I'm having trouble connecting right now. Please try again in a moment."
+          const msg = err instanceof Error ? err.message : String(err);
+          const errMsg = msg.includes("GEMINI_API_KEY")
+            ? "I'm having trouble connecting right now. Please try again in a moment."
+            : msg.includes("Gemini") || msg.includes("Empty response")
+              ? "I couldn't get a response just now. Please say that again."
               : "Sorry, something went wrong. Could you repeat that?";
           await speak(errMsg, langRef.current);
           setHint("Listening…");
@@ -549,18 +553,25 @@ function CallScreen({ sessionId, onHangUp }: { sessionId: string; onHangUp: () =
     r.onresult = (ev: any) => {
       if (speakingRef.current || isSpeechPlaying()) return;
 
-      let finalText = "";
+      let finalized = "";
+      for (let i = 0; i < ev.results.length; i++) {
+        if (ev.results[i].isFinal) {
+          finalized += ev.results[i][0]?.transcript ?? "";
+        }
+      }
+      bufferRef.current = finalized.trim();
+
       let interim = "";
       for (let i = ev.resultIndex; i < ev.results.length; i++) {
-        const res = ev.results[i];
-        const t = res[0]?.transcript ?? "";
-        if (res.isFinal) finalText += t + " ";
-        else interim += t;
+        if (!ev.results[i].isFinal) {
+          interim += ev.results[i][0]?.transcript ?? "";
+        }
       }
-      if (finalText) bufferRef.current = (bufferRef.current + " " + finalText).trim();
-      const live = [bufferRef.current, interim].filter(Boolean).join(" ").trim();
+
+      const live = [bufferRef.current, interim.trim()].filter(Boolean).join(" ").trim();
       if (live) setUserLive(live);
-      if (finalText || interim) {
+
+      if (finalized || interim) {
         clearSilenceTimer();
         silenceTimerRef.current = window.setTimeout(() => {
           if (speakingRef.current || isSpeechPlaying()) return;

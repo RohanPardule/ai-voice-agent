@@ -123,13 +123,17 @@ export const askAgent = createServerFn({ method: "POST" })
       { role: "user", content: data.message },
     ]);
 
+    if (!reply.trim()) {
+      throw new Error("Empty response from Gemini");
+    }
+
     const transcript: Msg[] = [
       ...data.history,
       { role: "user", content: data.message },
       { role: "assistant", content: reply },
     ];
 
-    await extractAndUpsertLead(data.sessionId, transcript);
+    void extractAndUpsertLead(data.sessionId, transcript);
 
     return { reply };
   });
