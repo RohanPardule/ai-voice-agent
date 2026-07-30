@@ -47,6 +47,7 @@ function Home() {
     name: null,
     email: null,
   });
+  const [hangupNote, setHangupNote] = useState<string | null>(null);
 
   const fetchContact = useServerFn(getLeadContact);
 
@@ -87,7 +88,10 @@ function Home() {
     }
   }
 
-  async function hangUp() {
+  async function hangUp(reason?: string) {
+    if (reason?.trim()) {
+      setHangupNote(reason.trim());
+    }
     if (sessionId) {
       disconnectCallSession(sessionId);
       try {
@@ -103,12 +107,20 @@ function Home() {
   function finishFeedback() {
     setScreen("landing");
     setSessionId("");
+    setHangupNote(null);
     setPrefill({ name: null, email: null });
   }
 
   if (screen === "call") return <RealtimeCallScreen sessionId={sessionId} onHangUp={hangUp} />;
   if (screen === "feedback")
-    return <FeedbackScreen sessionId={sessionId} prefill={prefill} onDone={finishFeedback} />;
+    return (
+      <FeedbackScreen
+        sessionId={sessionId}
+        prefill={prefill}
+        hangupNote={hangupNote}
+        onDone={finishFeedback}
+      />
+    );
   return <Landing onCall={startCall} isStartingCall={isStartingCall} micError={micError} />;
 }
 
@@ -263,10 +275,12 @@ function FeatureCard({
 function FeedbackScreen({
   sessionId,
   prefill,
+  hangupNote,
   onDone,
 }: {
   sessionId: string;
   prefill: { name: string | null; email: string | null };
+  hangupNote?: string | null;
   onDone: () => void;
 }) {
   const submit = useServerFn(submitFeedback);
@@ -329,6 +343,9 @@ function FeedbackScreen({
         <div className="mb-6 flex flex-col items-center gap-2 text-center">
           <img src={wordmark} alt="Innowrap" className="h-10 w-auto" />
           <h1 className="mt-2 text-xl font-semibold">How was your call?</h1>
+          {hangupNote ? (
+            <p className="mt-2 text-sm text-foreground">{hangupNote}</p>
+          ) : null}
           <p className="text-xs text-muted-foreground">
             Your feedback helps us improve the Innowrap Technologies AI Sales Agent.
           </p>
