@@ -1,14 +1,14 @@
 import { createFileRoute, useNavigate, Link } from "@tanstack/react-router";
 import { useState } from "react";
-import wordmark from "@/assets/innowrap-wordmark.png";
+import { BrandMark } from "@/components/BrandMark";
 
 export const Route = createFileRoute("/auth")({
   head: () => ({
     meta: [
-      { title: "Sign in — Innowrap Dashboard" },
+      { title: "Sign in — Radisson Hotel Goa Dashboard" },
       {
         name: "description",
-        content: "Admin sign-in for the Innowrap voice agent leads dashboard.",
+        content: "Admin sign-in for the Radisson Hotel Goa voice concierge leads dashboard.",
       },
       { name: "robots", content: "noindex" },
     ],
@@ -18,7 +18,7 @@ export const Route = createFileRoute("/auth")({
 
 const ADMIN_ID = "admin";
 const ADMIN_PASS = "Admin@123";
-export const ADMIN_FLAG = "innowrap_admin_ok";
+export const ADMIN_FLAG = "radisson_admin_ok";
 
 function AuthPage() {
   const navigate = useNavigate();
@@ -40,7 +40,7 @@ function AuthPage() {
     <div className="flex min-h-screen items-center justify-center bg-gradient-to-b from-background via-background to-secondary px-6">
       <div className="w-full max-w-sm rounded-2xl border border-border bg-card p-8 shadow-xl">
         <div className="mb-6 flex flex-col items-center gap-3 text-center">
-          <img src={wordmark} alt="Innowrap" className="h-12 w-auto" />
+          <BrandMark size="md" />
           <h1 className="text-lg font-semibold tracking-tight">Leads dashboard</h1>
           <p className="text-xs text-muted-foreground">Admin sign-in</p>
         </div>

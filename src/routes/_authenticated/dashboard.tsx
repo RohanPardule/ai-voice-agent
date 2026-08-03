@@ -3,16 +3,15 @@ import { useEffect, useState, useCallback } from "react";
 import { useServerFn } from "@tanstack/react-start";
 import { listLeads, listFeedbacks, deleteLead } from "@/lib/dashboard.functions";
 import { LogOut, RefreshCw, Mic, MessageSquare, Users, UserX } from "lucide-react";
-import wordmark from "@/assets/innowrap-wordmark.png";
-import icon from "@/assets/innowrap-icon.png";
+import { BrandMark, BrandIcon } from "@/components/BrandMark";
 
 export const Route = createFileRoute("/_authenticated/dashboard")({
   head: () => ({
     meta: [
-      { title: "Leads Dashboard — Innowrap" },
+      { title: "Leads Dashboard — Radisson Hotel Goa" },
       {
         name: "description",
-        content: "Captured leads and feedback from Innowrap's AI voice agent conversations.",
+        content: "Captured leads and feedback from Radisson Hotel Goa's AI concierge conversations.",
       },
       { name: "robots", content: "noindex" },
     ],
@@ -82,7 +81,7 @@ function Dashboard() {
   }, [load]);
 
   function handleSignOut() {
-    localStorage.removeItem("innowrap_admin_ok");
+    localStorage.removeItem("radisson_admin_ok");
     navigate({ to: "/auth", replace: true });
   }
 
@@ -102,11 +101,13 @@ function Dashboard() {
       <header className="border-b border-border bg-card">
         <div className="mx-auto flex max-w-7xl items-center justify-between px-6 py-4">
           <div className="flex items-center gap-3">
-            <img src={icon} alt="" className="h-9 w-9 rounded-md" />
-            <img src={wordmark} alt="Innowrap" className="hidden h-8 w-auto sm:block" />
+            <BrandIcon size="sm" />
+            <div className="hidden sm:block">
+              <BrandMark size="sm" />
+            </div>
             <div className="border-l border-border pl-3 text-sm">
               <p className="text-xs uppercase tracking-[0.25em] text-muted-foreground">Dashboard</p>
-              <p className="font-medium">Voice agent</p>
+              <p className="font-medium">Voice concierge</p>
             </div>
           </div>
           <div className="flex items-center gap-2">

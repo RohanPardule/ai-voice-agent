@@ -5,14 +5,14 @@ import { createSessionToken, fetchVoiceConfig, getCallEventsWsUrl } from "@/lib/
 import { RealtimeVoiceSession, type RealtimeStatus } from "@/lib/realtime-voice";
 import { stopSpeech } from "@/lib/speech";
 import { Loader2, PhoneOff } from "lucide-react";
-import icon from "@/assets/innowrap-icon.png";
+import { BrandIcon } from "@/components/BrandMark";
 
 type SetupStep = "connecting" | "live" | "error";
 
 type Status = "idle" | "listening" | "thinking" | "speaking";
 
 const CALL_CONTEXT =
-  "New inbound call. Greet the caller, ask which language they prefer, then which service they need. Continue naturally in their chosen language.";
+  "New inbound call. Greet the caller as Radisson Hotel Goa's AI Concierge, ask which language they prefer, then how you can help with their stay. Continue naturally in their chosen language.";
 
 const activeSessions = new Map<string, RealtimeVoiceSession>();
 
@@ -202,19 +202,19 @@ export function RealtimeCallScreen({
   const isActive = setupStep === "live" || setupStep === "connecting";
 
   return (
-    <div className="relative flex min-h-screen flex-col items-center justify-between overflow-hidden bg-gradient-to-b from-[#1a0a1f] via-[#0f0714] to-black px-6 py-10 text-white">
+    <div className="relative flex min-h-screen flex-col items-center justify-between overflow-hidden bg-gradient-to-b from-[#2a1508] via-[#1a0e06] to-black px-6 py-10 text-white">
       <div className="pointer-events-none absolute inset-0 opacity-40">
         <div
           className="absolute left-1/2 top-1/2 h-[600px] w-[600px] -translate-x-1/2 -translate-y-1/2 rounded-full blur-3xl"
           style={{
-            background: "radial-gradient(circle, oklch(0.55 0.18 320) 0%, transparent 70%)",
+            background: "radial-gradient(circle, oklch(0.65 0.19 45) 0%, transparent 70%)",
           }}
         />
       </div>
 
       <div className="relative z-10 flex flex-col items-center gap-2 text-center">
         <p className="text-xs uppercase tracking-[0.3em] text-white/60">On call with</p>
-        <p className="text-sm font-medium">Innowrap Technologies AI Sales Agent</p>
+        <p className="text-sm font-medium">Radisson Hotel Goa AI Concierge</p>
         <p className="mt-1 font-mono text-xs text-white/50">{mm}:{ss}</p>
       </div>
 
@@ -222,12 +222,12 @@ export function RealtimeCallScreen({
         <div className="relative flex h-44 w-44 items-center justify-center">
           {isActive && (
             <>
-              <span className="absolute inset-0 animate-ping rounded-full bg-white/10" />
-              <span className="absolute -inset-4 animate-pulse rounded-full border border-white/20" />
+              <span className="absolute inset-0 animate-ping rounded-full bg-orange-400/20" />
+              <span className="absolute -inset-4 animate-pulse rounded-full border border-orange-300/30" />
             </>
           )}
-          <div className="relative flex h-40 w-40 items-center justify-center rounded-full border border-white/15 bg-white/5 backdrop-blur">
-            <img src={icon} alt="Innowrap" className="h-20 w-20 rounded-2xl" />
+          <div className="relative flex h-40 w-40 items-center justify-center rounded-full border border-orange-200/20 bg-white/5 backdrop-blur">
+            <BrandIcon size="lg" />
           </div>
         </div>
 

@@ -4,32 +4,31 @@ import { useServerFn } from "@tanstack/react-start";
 import { getLeadContact, submitFeedback } from "@/lib/voice-agent.functions";
 import { disconnectCallSession, RealtimeCallScreen } from "@/components/RealtimeCallScreen";
 import { unlockSpeechOnUserGesture } from "@/lib/speech";
+import { BrandMark } from "@/components/BrandMark";
 import {
   Phone,
-  PhoneOff,
   Loader2,
   Sparkles,
-  Cpu,
+  Waves,
+  UtensilsCrossed,
   Building2,
   ExternalLink,
   Star,
 } from "lucide-react";
-import wordmark from "@/assets/innowrap-wordmark.png";
-import icon from "@/assets/innowrap-icon.png";
 
 export const Route = createFileRoute("/")({
   head: () => ({
     meta: [
-      { title: "Innowrap Technologies AI Sales Agent" },
-        {
-          name: "description",
-          content:
-            "Call Innowrap Technologies' AI Sales Agent — a voice-first assistant for AI solutions, software development, mobile apps, and enterprise transformation.",
-        },
-        { property: "og:title", content: "Innowrap Technologies AI Sales Agent" },
-        {
-          property: "og:description",
-          content: "Voice-first AI agent for Innowrap Technologies' services and enterprise software enquiries.",
+      { title: "Radisson Hotel Goa AI Concierge" },
+      {
+        name: "description",
+        content:
+          "Call Radisson Hotel Goa's AI Concierge — a voice-first assistant for reservations, dining, spa, and guest services.",
+      },
+      { property: "og:title", content: "Radisson Hotel Goa AI Concierge" },
+      {
+        property: "og:description",
+        content: "Voice-first AI concierge for Radisson Hotel Goa reservations and guest enquiries.",
       },
     ],
   }),
@@ -141,21 +140,21 @@ function Landing({
         <div
           className="absolute left-1/2 top-0 h-[600px] w-[600px] -translate-x-1/2 rounded-full blur-3xl"
           style={{
-            background: "radial-gradient(circle, oklch(0.55 0.15 320) 0%, transparent 70%)",
+            background: "radial-gradient(circle, oklch(0.7 0.18 45) 0%, transparent 70%)",
           }}
         />
       </div>
 
       <header className="relative z-10 mx-auto flex max-w-6xl items-center justify-between px-6 py-6">
-        <img src={wordmark} alt="Innowrap" className="h-9 w-auto" />
+        <BrandMark size="sm" />
         <div className="flex items-center gap-3">
           <a
-            href="https://www.innowrap.com/"
+            href="https://www.radissonhotels.com/en-us/hotels/radisson-goa-candolim"
             target="_blank"
             rel="noopener noreferrer"
             className="hidden items-center gap-1.5 text-xs text-muted-foreground hover:text-foreground sm:inline-flex"
           >
-            innowrap.com <ExternalLink className="h-3 w-3" />
+            radissonhotels.com <ExternalLink className="h-3 w-3" />
           </a>
           <Link
             to="/auth"
@@ -168,21 +167,21 @@ function Landing({
 
       <main className="relative z-10 mx-auto flex max-w-6xl flex-col items-center px-6 pb-16 pt-8 text-center">
         <div className="mb-4 inline-flex items-center gap-2 rounded-full border border-border bg-card/60 px-3 py-1 text-xs text-muted-foreground backdrop-blur">
-          <Sparkles className="h-3.5 w-3.5" /> AI-first software development
+          <Sparkles className="h-3.5 w-3.5 text-primary" /> Candolim, North Goa
         </div>
         <h1 className="text-4xl font-semibold tracking-tight sm:text-5xl">
-          Talk to Innowrap Technologies' AI Sales Agent
+          Talk to Radisson Hotel Goa's AI Concierge
         </h1>
         <p className="mt-4 max-w-xl text-sm text-muted-foreground sm:text-base">
-          A voice-first way to explore what we build — AI agents, enterprise software, mobile apps,
-          Salesforce, and digital transformation. Tap Call and speak naturally.
+          A voice-first way to explore rooms, dining, spa, and guest services. Tap Call and speak
+          naturally — we are here to help plan your stay.
         </p>
 
         <button
           type="button"
           onClick={() => void onCall()}
           disabled={isStartingCall}
-          className="group relative mt-10 inline-flex items-center gap-3 rounded-full bg-primary px-10 py-5 text-lg font-semibold text-primary-foreground shadow-[0_10px_40px_-10px_oklch(0.55_0.15_320/0.6)] transition-transform hover:scale-[1.03] disabled:cursor-wait disabled:opacity-80 disabled:hover:scale-100"
+          className="group relative mt-10 inline-flex items-center gap-3 rounded-full bg-primary px-10 py-5 text-lg font-semibold text-primary-foreground shadow-[0_10px_40px_-10px_oklch(0.65_0.19_45/0.55)] transition-transform hover:scale-[1.03] disabled:cursor-wait disabled:opacity-80 disabled:hover:scale-100"
         >
           <span className="absolute inset-0 -z-10 animate-pulse rounded-full bg-primary/40 blur-xl" />
           {isStartingCall ? (
@@ -190,7 +189,7 @@ function Landing({
           ) : (
             <Phone className="h-6 w-6" />
           )}
-          {isStartingCall ? "Allow microphone…" : "Call the Agent"}
+          {isStartingCall ? "Allow microphone…" : "Call the Concierge"}
         </button>
         <p className="mt-3 text-xs text-muted-foreground">
           {isStartingCall
@@ -205,43 +204,43 @@ function Landing({
 
         <div className="mt-16 grid w-full grid-cols-1 gap-4 sm:grid-cols-3">
           <FeatureCard
-            icon={<Cpu className="h-5 w-5" />}
-            title="AI Agents & Automation"
-            desc="Voice, chat, workflow, and enterprise-knowledge AI."
-          />
-          <FeatureCard
             icon={<Building2 className="h-5 w-5" />}
-            title="Enterprise Software"
-            desc="CRM, ERP, portals, mobile — end-to-end delivery."
+            title="Rooms & Suites"
+            desc="Comfortable stays with pool views near Candolim Beach."
           />
           <FeatureCard
-            icon={<Sparkles className="h-5 w-5" />}
-            title="Salesforce & Cloud"
-            desc="Implementation, customization, AI optimization."
+            icon={<UtensilsCrossed className="h-5 w-5" />}
+            title="Dining & Bar"
+            desc="Multi-cuisine dining at The Palms and poolside Red Mango."
+          />
+          <FeatureCard
+            icon={<Waves className="h-5 w-5" />}
+            title="Spa & Leisure"
+            desc="Spa therapies, pool, and easy access to North Goa."
           />
         </div>
 
         <div className="mt-12 flex flex-wrap items-center justify-center gap-x-6 gap-y-2 text-xs text-muted-foreground">
-          <span>Diageo India</span>
+          <span>Candolim Beach</span>
           <span>·</span>
-          <span>Tata Consumer (Mavic)</span>
+          <span>Fort Aguada</span>
           <span>·</span>
-          <span>Curly Tales</span>
+          <span>Calangute</span>
           <span>·</span>
-          <span>Digi1</span>
+          <span>Panjim</span>
         </div>
       </main>
 
       <footer className="relative z-10 border-t border-border/50 bg-background/50 backdrop-blur">
         <div className="mx-auto flex max-w-6xl flex-col items-center justify-between gap-2 px-6 py-5 text-xs text-muted-foreground sm:flex-row">
-          <span>hello@innowrap.com · +91 7021239589</span>
+          <span>info@rdgoa.com · +91 832 671 9999</span>
           <a
-            href="https://www.innowrap.com/"
+            href="https://www.radissonhotels.com/en-us/hotels/radisson-goa-candolim"
             target="_blank"
             rel="noopener noreferrer"
             className="hover:text-foreground"
           >
-            www.innowrap.com
+            www.radissonhotels.com
           </a>
         </div>
       </footer>
@@ -341,13 +340,13 @@ function FeedbackScreen({
     <div className="flex min-h-screen items-center justify-center bg-gradient-to-b from-background via-background to-secondary px-6 py-10">
       <div className="w-full max-w-md rounded-2xl border border-border bg-card p-8 shadow-xl">
         <div className="mb-6 flex flex-col items-center gap-2 text-center">
-          <img src={wordmark} alt="Innowrap" className="h-10 w-auto" />
+          <BrandMark size="md" />
           <h1 className="mt-2 text-xl font-semibold">How was your call?</h1>
           {hangupNote ? (
             <p className="mt-2 text-sm text-foreground">{hangupNote}</p>
           ) : null}
           <p className="text-xs text-muted-foreground">
-            Your feedback helps us improve the Innowrap Technologies AI Sales Agent.
+            Your feedback helps us improve the Radisson Hotel Goa AI Concierge.
           </p>
         </div>
 
